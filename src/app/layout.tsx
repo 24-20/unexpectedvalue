@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/Nav";
-import { Footer } from "@/components/Footer";
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
@@ -37,7 +36,6 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         <Nav />
         <main className="flex-1 flex flex-col">{children}</main>
-        <Footer />
         <div className="rails" aria-hidden="true" />
       </body>
     </html>

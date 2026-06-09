@@ -296,6 +296,14 @@ export function PortfolioChart({
     seriesRef.current.setData(chartData);
     chartRef.current?.timeScale().fitContent();
     setHover(null);
+    // On initial SSR mount the chart's container hasn't settled into its
+    // final size when this effect runs, so fitContent computes against a
+    // stale viewport and the live point at the right edge gets cropped.
+    // Re-fit on the next frame to catch the post-layout dimensions.
+    const raf = requestAnimationFrame(() => {
+      chartRef.current?.timeScale().fitContent();
+    });
+    return () => cancelAnimationFrame(raf);
   }, [chartData, directionUp]);
 
   const display = hover ?? {

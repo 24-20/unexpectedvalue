@@ -36,18 +36,12 @@ export default async function CommunityPage() {
   const inviteUrl = widget?.instantInvite ?? getDiscordInviteUrl();
 
   return (
-    <div className="relative py-12 md:py-24 flex-1 overflow-hidden">
+    <div className="relative sm:pl-20 py-12 md:py-24 flex-1 overflow-hidden">
       <AsciiBackdrop art={PLANET_ASCII} />
       <Container className="relative z-10">
         <div className="max-w-2xl">
-          <Mono className="text-muted">[ Community ]</Mono>
-          <h1 className="mt-4 text-2xl sm:text-3xl md:text-5xl lg:text-6xl font-normal tracking-[-0.01em] leading-[1.05]">
-            Join us on Discord.
-          </h1>
-          <p className="mt-4 sm:mt-6 text-base sm:text-lg text-muted leading-relaxed">
-            Discussion, ideas, and a frontrow view of the bets we&apos;re
-            placing.
-          </p>
+          
+          
 
           <a
             href={inviteUrl}
@@ -143,14 +137,7 @@ function MemberCell({ member }: { member: DiscordMember }) {
 
 function WidgetDisabledNote({ enabled }: { enabled: boolean }) {
   return (
-    <div className="mt-16 md:mt-20 border border-border bg-surface p-5 max-w-2xl">
-      <Mono className="text-muted">[ Members ]</Mono>
-      <p className="mt-3 text-sm text-muted leading-relaxed">
-        {enabled
-          ? "Nobody online right now. Join the server to be the first."
-          : "Member list unavailable — server widget is disabled. Enable it in Server Settings → Widget to show members here."}
-      </p>
-    </div>
+    <></>
   );
 }
 

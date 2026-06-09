@@ -43,7 +43,7 @@ export default function AboutPage() {
           </h1>
           <p className="mt-6 text-base sm:text-lg md:text-xl text-muted max-w-xl leading-relaxed">
             A small private equity firm using machine learning to surface
-            opportunities the market overlooks.
+            opportunities the market overlooks. AKA Profesional Gamblers
           </p>
         </div>
       </Container>
