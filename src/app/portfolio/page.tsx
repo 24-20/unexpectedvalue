@@ -142,6 +142,14 @@ function HoldingsSkeleton() {
             <Bar className="h-3 w-14" />
           </div>
         </div>
+
+        <div
+          aria-hidden
+          className="mt-3 inline-flex items-center gap-1.5 text-muted"
+        >
+          <span className="font-mono text-xs">Verify Balance</span>
+          <span className="w-3.5 h-3.5" />
+        </div>
       </div>
 
     </div>

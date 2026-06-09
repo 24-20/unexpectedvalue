@@ -8,9 +8,8 @@ const SHADES = [
 
 export default function PercentagesPage() {
   return (
-    <div className="mx-auto w-full max-w-7xl px-3 sm:px-6 md:px-10">
-      <div className="w-full bg-surface-elevated border-b border-border">
-        <div className="mx-auto max-w-xl">
+    <div className="flex-1 flex justify-center px-6">
+      <div className="w-full max-w-xl border-b border-border bg-surface">
         <div className="px-5 md:px-7 pt-5 md:pt-6 pb-4 md:pb-5">
           <div className="flex items-baseline justify-between mb-4">
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted">
@@ -58,7 +57,6 @@ export default function PercentagesPage() {
             </li>
           ))}
         </ul>
-        </div>
       </div>
     </div>
   );

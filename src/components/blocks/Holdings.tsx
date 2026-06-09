@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { formatNOK } from "@/lib/format";
 import type { LiveBalances } from "@/lib/balances";
 import { usePolledBalances } from "@/lib/useBalances";
+import { ShieldCheckIcon } from "@/components/icons";
 
 interface HoldingsProps {
   initial: LiveBalances;
@@ -109,6 +111,17 @@ export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
             <span>{formatNOK(bets)}</span>
           </div>
         </div>
+
+        <Link
+          href="/verify"
+          aria-label="Verify balance"
+          className="group mt-3 inline-flex items-center gap-1.5 text-muted hover:text-foreground transition-colors"
+        >
+          <span className="font-mono text-xs group-hover:underline underline-offset-4">
+            Verify Balance
+          </span>
+          <ShieldCheckIcon className="w-3.5 h-3.5" />
+        </Link>
       </div>
 
     </div>

@@ -4,7 +4,7 @@ import { AlertBell } from "@/components/AlertBell";
 
 const RIGHT_LINKS = [
   { href: "/about", label: "About" },
-  { href: "/percentages", label: "Percentages" },
+  { href: "/owners", label: "Owners" },
 ];
 
 export function Nav() {
