@@ -68,8 +68,8 @@ export default async function VerifyPage() {
             .
           </h1>
           <p className="mt-5 text-base sm:text-lg text-muted max-w-xl leading-relaxed">
-            The dashboard reads live from the two wallets below. Every move is
-            on-chain — public, permanent, and verifiable by anyone.
+            The dashboard reads live from the two wallets below. Every transaction and bet is
+            on-chain. Public, permanent, and verifiable by anyone.
           </p>
         </div>
 
