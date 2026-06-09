@@ -60,6 +60,10 @@ function mergeBalances(prev: LiveBalances, next: LiveBalances): LiveBalances {
       positions,
       activity,
     },
+    customBetsRealizedPnlUsd: pick(
+      next.customBetsRealizedPnlUsd,
+      prev.customBetsRealizedPnlUsd,
+    ),
     rates: {
       solUsd: pick(next.rates.solUsd, prev.rates.solUsd),
       usdNok: pick(next.rates.usdNok, prev.rates.usdNok),
