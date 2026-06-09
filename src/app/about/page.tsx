@@ -1,4 +1,4 @@
-import { Container, Mono } from "@/components/ui";
+import { Container } from "@/components/ui";
 import { AsciiBackdrop } from "@/components/blocks";
 
 // "Saturn as seen from one of its moons" — sourced from ascii.co.uk/art/saturn
@@ -34,10 +34,7 @@ export default function AboutPage() {
       <AsciiBackdrop art={SPACE_ASCII} />
       <Container className="relative z-10">
         <div className="max-w-2xl">
-          <Mono className="text-muted">
-            [ Private equity // machine learning ]
-          </Mono>
-          <h1 className="mt-4 text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-normal tracking-[-0.01em] leading-[1.05]">
+          <h1 className="text-3xl sm:text-4xl md:text-6xl lg:text-7xl font-normal tracking-[-0.01em] leading-[1.05]">
             We are dedicated to finding value where{" "}
             <span className="underline decoration-2 underline-offset-[6px]">
               others don&apos;t look

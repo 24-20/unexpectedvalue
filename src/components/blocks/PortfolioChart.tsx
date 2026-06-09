@@ -86,7 +86,7 @@ function readThemeColors(): ThemeColors {
 export function PortfolioChart({
   series,
   ranges,
-  defaultRange = "3M",
+  defaultRange = "1M",
 }: PortfolioChartProps) {
   const [range, setRange] = useState<Range>(defaultRange);
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -105,11 +105,14 @@ export function PortfolioChart({
   const directionUp = active.changePct >= 0;
 
   const chartData = useMemo(() => {
+    // Plot absolute NOK values so the line keeps its shape even when the
+    // base (startValue) is 0 — e.g. when the visible range starts before
+    // the user ever had a balance.
     return active.points.map((p) => ({
       time: Math.floor(p.t / 1000) as UTCTimestamp,
-      value: base > 0 ? ((p.v - base) / base) * 100 : 0,
+      value: p.v,
     }));
-  }, [active, base]);
+  }, [active]);
 
   const absLookup = useMemo(() => {
     const m = new Map<number, number>();
@@ -195,12 +198,8 @@ export function PortfolioChart({
       crosshairMarkerBorderWidth: 2,
       priceFormat: {
         type: "custom",
-        formatter: (v: number) => {
-          const abs = Math.abs(v);
-          const digits = abs < 1 ? 2 : abs < 10 ? 1 : 0;
-          return `${v < 0 ? "−" : ""}${abs.toFixed(digits)}%`;
-        },
-        minMove: 0.01,
+        formatter: (v: number) => formatNOK(v),
+        minMove: 1,
       },
     });
 
@@ -320,14 +319,16 @@ export function PortfolioChart({
                 <div className="mt-2 text-4xl md:text-5xl font-medium tabular-nums tracking-tight">
                   {formatNOK(display.value)}
                 </div>
-                <div className="mt-2 flex flex-wrap items-baseline gap-3 font-mono text-sm tabular-nums">
+                <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
                   <span className="text-muted">
                     {hover ? formatDateTime(display.t) : rangeLabel}
                   </span>
-                  <span className={deltaTone}>{formatPct(display.pct)}</span>
-                  <span className={deltaTone}>
-                    {formatNOKDelta(display.delta)}
-                  </span>
+                  <div className="flex items-baseline gap-3">
+                    <span className={deltaTone}>{formatPct(display.pct)}</span>
+                    <span className={deltaTone}>
+                      {formatNOKDelta(display.delta)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -338,7 +339,7 @@ export function PortfolioChart({
             className="h-[300px] md:h-[420px] w-full touch-none px-3 sm:px-6"
           />
 
-          <div className="border-t border-border p-3 md:p-4 flex flex-wrap gap-2">
+          <div className="p-3 md:p-4 flex flex-wrap gap-2">
             {ranges.map((r) => {
               const isActive = r.key === range;
               const s = series[r.key];
@@ -351,10 +352,10 @@ export function PortfolioChart({
                   className={cn(
                     "flex flex-col items-center justify-center gap-0.5",
                     "px-3 md:px-4 py-2 min-w-[72px] flex-1 md:flex-initial",
-                    "border transition-colors font-mono uppercase",
+                    "rounded-lg transition-colors font-mono uppercase",
                     isActive
-                      ? "border-foreground bg-surface-elevated"
-                      : "border-border bg-transparent hover:border-border-strong hover:bg-surface-elevated/60",
+                      ? "bg-foreground/15 text-foreground"
+                      : "bg-foreground/[0.05] text-muted hover:bg-foreground/10 hover:text-foreground",
                   )}
                 >
                   <span className="text-[11px] tracking-widest">{r.label}</span>

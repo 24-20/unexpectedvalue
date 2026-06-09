@@ -17,10 +17,17 @@ interface PolymarketBetsProps {
 
 type Tab = "active" | "history";
 type SortMode = "recent" | "amount";
+type HistorySortMode = "recent" | "biggest_win" | "biggest_loss";
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: "recent", label: "Most recent" },
   { value: "amount", label: "Highest amount" },
+];
+
+const HISTORY_SORT_OPTIONS: { value: HistorySortMode; label: string }[] = [
+  { value: "recent", label: "Most recent" },
+  { value: "biggest_win", label: "Biggest win" },
+  { value: "biggest_loss", label: "Biggest loss" },
 ];
 
 export function PolymarketBets({
@@ -30,6 +37,7 @@ export function PolymarketBets({
   const { data } = usePolledBalances(initial, pollMs);
   const [tab, setTab] = useState<Tab>("active");
   const [sort, setSort] = useState<SortMode>("recent");
+  const [historySort, setHistorySort] = useState<HistorySortMode>("recent");
 
   const usdNok = data.rates.usdNok;
   const positions = (data.polymarketBets.positions ?? []).filter(
@@ -64,34 +72,58 @@ export function PolymarketBets({
     return sorted;
   }, [positions, sort, positionRecency]);
 
+  const sortedActivity = useMemo(() => {
+    const sorted = [...activity];
+    if (historySort === "biggest_win") {
+      sorted.sort((a, b) => signedValueUsd(b) - signedValueUsd(a));
+    } else if (historySort === "biggest_loss") {
+      sorted.sort((a, b) => signedValueUsd(a) - signedValueUsd(b));
+    } else {
+      sorted.sort((a, b) => b.timestamp - a.timestamp);
+    }
+    return sorted;
+  }, [activity, historySort]);
+
   return (
     <div className="border-y border-border">
       <div className="mx-auto max-w-7xl px-3 sm:px-6 md:px-10">
         <div className="bg-surface">
           <div className="px-3 py-3 border-b border-border flex items-center gap-2">
-            <TabButton
-              active={tab === "active"}
-              onClick={() => setTab("active")}
-            >
-              Active bets
-            </TabButton>
-            <TabButton
-              active={tab === "history"}
-              onClick={() => setTab("history")}
-            >
-              History
-            </TabButton>
-            {tab === "active" && (
-              <div className="ml-auto">
-                <SortFilter sort={sort} onChange={setSort} />
-              </div>
-            )}
+            <div className="inline-flex items-center bg-foreground/[0.05] rounded-lg p-1 gap-0.5">
+              <TabButton
+                active={tab === "active"}
+                onClick={() => setTab("active")}
+              >
+                Active bets
+              </TabButton>
+              <TabButton
+                active={tab === "history"}
+                onClick={() => setTab("history")}
+              >
+                History
+              </TabButton>
+            </div>
+            <div className="ml-auto">
+              {tab === "active" ? (
+                <SortFilter
+                  sort={sort}
+                  options={SORT_OPTIONS}
+                  onChange={setSort}
+                />
+              ) : (
+                <SortFilter
+                  sort={historySort}
+                  options={HISTORY_SORT_OPTIONS}
+                  onChange={setHistorySort}
+                />
+              )}
+            </div>
           </div>
 
           {tab === "active" ? (
             <ActiveBetsTable positions={sortedPositions} usdNok={usdNok} />
           ) : (
-            <HistoryTable events={activity} usdNok={usdNok} />
+            <HistoryTable events={sortedActivity} usdNok={usdNok} />
           )}
         </div>
       </div>
@@ -99,12 +131,14 @@ export function PolymarketBets({
   );
 }
 
-function SortFilter({
+function SortFilter<V extends string>({
   sort,
+  options,
   onChange,
 }: {
-  sort: SortMode;
-  onChange: (s: SortMode) => void;
+  sort: V;
+  options: { value: V; label: string }[];
+  onChange: (s: V) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -120,9 +154,6 @@ function SortFilter({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  const currentLabel =
-    SORT_OPTIONS.find((o) => o.value === sort)?.label ?? "Sort";
-
   return (
     <div ref={ref} className="relative">
       <button
@@ -130,9 +161,9 @@ function SortFilter({
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="font-mono text-[10px] uppercase tracking-widest border border-border text-muted px-3 py-2 hover:border-muted-strong hover:text-foreground flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
+        className="font-mono text-[10px] uppercase tracking-widest rounded-lg bg-foreground/[0.05] text-muted px-3 py-2 hover:bg-foreground/10 hover:text-foreground flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
       >
-        <span>{currentLabel}</span>
+        <span>Filter</span>
         <span
           aria-hidden
           className={cn(
@@ -146,28 +177,40 @@ function SortFilter({
       {open && (
         <div
           role="listbox"
-          className="absolute right-0 top-full mt-1 border border-border bg-surface-elevated min-w-[160px] z-20"
+          className="absolute right-0 top-full mt-1 rounded-lg bg-surface-elevated min-w-[180px] z-20 overflow-hidden p-1"
         >
-          {SORT_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              role="option"
-              aria-selected={opt.value === sort}
-              onClick={() => {
-                onChange(opt.value);
-                setOpen(false);
-              }}
-              className={cn(
-                "block w-full text-left font-mono text-[10px] uppercase tracking-widest px-3 py-2 whitespace-nowrap cursor-pointer transition-colors",
-                opt.value === sort
-                  ? "bg-foreground text-background"
-                  : "text-muted hover:text-foreground hover:bg-surface",
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
+          {options.map((opt) => {
+            const selected = opt.value === sort;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex items-center justify-between gap-3 w-full text-left font-mono text-[10px] uppercase tracking-widest rounded-lg px-3 py-2 whitespace-nowrap cursor-pointer transition-colors",
+                  selected
+                    ? "text-foreground"
+                    : "text-muted hover:bg-foreground/10 hover:text-foreground",
+                )}
+              >
+                <span>{opt.label}</span>
+                <span
+                  aria-hidden
+                  className={cn(
+                    "leading-none",
+                    selected ? "opacity-100" : "opacity-0",
+                  )}
+                >
+                  ✓
+                </span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -450,10 +493,10 @@ function TabButton({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-colors cursor-pointer",
+        "font-mono text-xs uppercase tracking-widest rounded-md px-3 py-1.5 transition-colors cursor-pointer",
         active
-          ? "bg-foreground text-background border-foreground"
-          : "bg-transparent text-muted border-border hover:text-foreground hover:border-muted-strong",
+          ? "bg-foreground/20 text-foreground"
+          : "text-muted hover:text-foreground",
       )}
     >
       {children}

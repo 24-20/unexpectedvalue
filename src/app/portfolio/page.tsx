@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { Container, Mono } from "@/components/ui";
 import {
   Holdings,
@@ -77,13 +76,13 @@ function ChartSkeleton() {
             <div className="h-px w-full bg-border animate-pulse" />
           </div>
 
-          <div className="border-t border-border p-3 md:p-4 flex flex-wrap gap-2">
+          <div className="p-3 md:p-4 flex flex-wrap gap-2">
             {RANGES.map((r) => (
               <div
                 key={r.key}
-                className="px-3 md:px-4 py-2 min-w-[72px] flex-1 md:flex-initial border border-border bg-transparent flex flex-col items-center justify-center gap-0.5"
+                className="px-3 md:px-4 py-2 min-w-[72px] flex-1 md:flex-initial rounded-lg bg-foreground/[0.05] flex flex-col items-center justify-center gap-0.5"
               >
-                <span className="font-mono uppercase text-[11px] tracking-widest">
+                <span className="font-mono uppercase text-[11px] tracking-widest text-muted">
                   {r.label}
                 </span>
                 <Bar className="h-2.5 w-10" />
@@ -136,17 +135,6 @@ function HoldingsSkeleton() {
         </div>
       </div>
 
-      <div className="hidden sm:flex flex-col items-end gap-3 shrink-0">
-        <div className="text-lg md:text-xl font-medium tracking-tight whitespace-nowrap text-muted-strong">
-          Invest in UNX
-        </div>
-        <Link
-          href="mailto:contact@unx.capital"
-          className="inline-flex items-center gap-2 border border-border bg-transparent text-muted px-4 py-2 font-mono text-xs uppercase tracking-widest"
-        >
-          Get access →
-        </Link>
-      </div>
     </div>
   );
 }
@@ -157,11 +145,19 @@ function BetsSkeleton() {
       <div className="mx-auto max-w-7xl px-3 sm:px-6 md:px-10">
         <div className="bg-surface">
           <div className="px-3 py-3 border-b border-border flex items-center gap-2">
-            <div className="font-mono text-xs uppercase tracking-widest border border-border bg-transparent text-muted px-4 py-2">
-              Active bets
+            <div className="inline-flex items-center bg-foreground/[0.05] rounded-lg p-1 gap-0.5">
+              <div className="font-mono text-xs uppercase tracking-widest rounded-md px-3 py-1.5 bg-foreground/20 text-foreground">
+                Active bets
+              </div>
+              <div className="font-mono text-xs uppercase tracking-widest rounded-md px-3 py-1.5 text-muted">
+                History
+              </div>
             </div>
-            <div className="font-mono text-xs uppercase tracking-widest border border-border bg-transparent text-muted px-4 py-2">
-              History
+            <div className="ml-auto font-mono text-[10px] uppercase tracking-widest rounded-lg bg-foreground/[0.05] text-muted px-3 py-2 flex items-center gap-2 whitespace-nowrap">
+              <span>Filter</span>
+              <span aria-hidden className="leading-none">
+                ▾
+              </span>
             </div>
           </div>
           <div className="min-h-[200px]">

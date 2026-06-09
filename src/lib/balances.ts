@@ -5,14 +5,18 @@ const POLYMARKET_ADDRESS =
   process.env.POLYMARKET_ADDRESS ?? "0xdee67d2c135d1c374bbb5ec52ed22cee0edb782f";
 const SOLANA_ADDRESS =
   process.env.SOLANA_ADDRESS ?? "EyeWgvbTduRDMzbERKvy6Muxdi83U6DYSLaqCtPjKcGz";
+// publicnode blocks getTokenAccountsByOwner with a programId filter, which
+// silently breaks every SPL token query (Phantom stables, Polymarket SVM bridge).
+// mainnet-beta serves it correctly.
 const SOLANA_RPC =
-  process.env.SOLANA_RPC_URL ?? "https://solana-rpc.publicnode.com";
+  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
 const POLYGON_RPC =
   process.env.POLYGON_RPC_URL ?? "https://polygon-bor-rpc.publicnode.com";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const REVALIDATE_BALANCES = 10;
 const REVALIDATE_RATES = 60;
+const REVALIDATE_BRIDGE_ADDRESSES = 3600;
 const FETCH_TIMEOUT_MS = 4000;
 const FETCH_RETRIES = 1;
 
@@ -21,17 +25,17 @@ const USDC_MINT_SOL = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const USDT_MINT_SOL = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
 const STABLE_MINTS = new Set([USDC_MINT_SOL, USDT_MINT_SOL]);
 
+// pUSD is Polymarket's collateral token since the April 2026 V2 migration —
+// resting cash sits in the proxy as pUSD, not USDC. USDC.e / native USDC are
+// kept because the bridge deposit relays briefly hold those before conversion.
+const PUSD_POLYGON = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB";
 const USDC_E_POLYGON = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const USDC_POLYGON = "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359";
+const POLYGON_CASH_TOKENS = [PUSD_POLYGON, USDC_E_POLYGON, USDC_POLYGON];
 const USDC_DECIMALS = 6;
 const BALANCE_OF_SELECTOR = "0x70a08231";
 
-const POLYMARKET_BRIDGE_EVM =
-  process.env.POLYMARKET_BRIDGE_EVM ??
-  "0xD7658791eb8b7D5410E43127520C351De453A71D";
-const POLYMARKET_BRIDGE_SVM =
-  process.env.POLYMARKET_BRIDGE_SVM ??
-  "3ADZFsTweYNgcLUYDJHTAZV9AsJX1KJN3WJC4zQ9x9ja";
+const POLYMARKET_BRIDGE_API = "https://bridge.polymarket.com/deposit";
 
 export interface PolymarketPosition {
   source: string; // "polymarket" or bookie name (e.g., "Roobet")
@@ -189,12 +193,12 @@ async function fetchErc20Balance(
 }
 
 async function fetchOwnerUsdc(owner: string): Promise<number | null> {
-  const [bridged, native] = await Promise.all([
-    fetchErc20Balance(USDC_E_POLYGON, owner),
-    fetchErc20Balance(USDC_POLYGON, owner),
-  ]);
-  if (bridged == null && native == null) return null;
-  return (bridged ?? 0) + (native ?? 0);
+  const balances = await Promise.all(
+    POLYGON_CASH_TOKENS.map((token) => fetchErc20Balance(token, owner)),
+  );
+  const parts = balances.filter((v): v is number => v != null);
+  if (parts.length === 0) return null;
+  return parts.reduce((s, v) => s + v, 0);
 }
 
 interface ParsedTokenAccount {
@@ -233,11 +237,38 @@ async function fetchSolanaUsdc(owner: string): Promise<number | null> {
   return sum;
 }
 
+interface BridgeAddresses {
+  evm: string | null;
+  svm: string | null;
+}
+
+// Polymarket's Bridge API returns per-user deposit relay addresses. Funds
+// sent there from supported chains are auto-converted to USDC and forwarded
+// to the proxy — so the cash count must include any in-flight balance there.
+async function fetchPolymarketBridgeAddresses(
+  wallet: string,
+): Promise<BridgeAddresses> {
+  const res = await safeFetch(POLYMARKET_BRIDGE_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ address: wallet }),
+    next: { revalidate: REVALIDATE_BRIDGE_ADDRESSES },
+  });
+  const data = await safeJson<{
+    address?: { evm?: string; svm?: string };
+  }>(res);
+  return {
+    evm: data?.address?.evm ?? null,
+    svm: data?.address?.svm ?? null,
+  };
+}
+
 async function fetchPolymarketCashUsdc(): Promise<number | null> {
+  const bridges = await fetchPolymarketBridgeAddresses(POLYMARKET_ADDRESS);
   const [proxy, evmBridge, svmBridge] = await Promise.all([
     fetchOwnerUsdc(POLYMARKET_ADDRESS),
-    fetchOwnerUsdc(POLYMARKET_BRIDGE_EVM),
-    fetchSolanaUsdc(POLYMARKET_BRIDGE_SVM),
+    bridges.evm ? fetchOwnerUsdc(bridges.evm) : Promise.resolve(null),
+    bridges.svm ? fetchSolanaUsdc(bridges.svm) : Promise.resolve(null),
   ]);
   const parts = [proxy, evmBridge, svmBridge].filter(
     (v): v is number => v != null,

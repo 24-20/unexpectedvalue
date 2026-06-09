@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { formatNOK } from "@/lib/format";
 import type { LiveBalances } from "@/lib/balances";
 import { usePolledBalances } from "@/lib/useBalances";
@@ -112,17 +111,6 @@ export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
         </div>
       </div>
 
-      <div className="hidden sm:flex flex-col items-end gap-3 shrink-0">
-        <div className="text-lg md:text-xl font-medium tracking-tight whitespace-nowrap">
-          Invest in UNX
-        </div>
-        <Link
-          href="mailto:contact@unx.capital"
-          className="inline-flex items-center gap-2 border border-foreground bg-foreground text-background px-4 py-2 font-mono text-xs uppercase tracking-widest hover:bg-background hover:text-foreground transition-colors"
-        >
-          Get access →
-        </Link>
-      </div>
     </div>
   );
 }

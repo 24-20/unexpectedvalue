@@ -45,10 +45,6 @@
   --font-mono: var(--font-geist-mono);
 }
 
-* {
-  border-radius: 0 !important;
-}
-
 html {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
