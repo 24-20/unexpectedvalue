@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { Container } from "@/components/ui";
 
-const LINKS = [
-  { href: "/portfolio", label: "Portfolio" },
+const RIGHT_LINKS = [
   { href: "/about", label: "About" },
   { href: "/community", label: "Community" },
 ];
@@ -13,12 +12,12 @@ export function Nav() {
       <Container className="flex h-14 items-center justify-between px-6 sm:px-10 md:px-16">
         <Link
           href="/portfolio"
-          className="font-mono text-sm font-semibold uppercase tracking-widest"
+          className="font-mono text-xs uppercase tracking-widest text-muted hover:text-foreground transition-colors"
         >
-          UNX
+          Portfolio
         </Link>
         <nav className="flex items-center gap-6 font-mono text-xs uppercase tracking-widest text-muted">
-          {LINKS.map((l) => (
+          {RIGHT_LINKS.map((l) => (
             <Link
               key={l.href}
               href={l.href}
