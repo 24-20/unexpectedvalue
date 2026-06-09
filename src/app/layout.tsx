@@ -11,6 +11,10 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Gutta Printer",
   description: "Norske gutta som printer der andre ikke ser.",
+  icons: {
+    icon: [{ url: "/favicon.png", type: "image/png", sizes: "192x192" }],
+    apple: [{ url: "/favicon.png", sizes: "192x192" }],
+  },
 };
 
 export const viewport: Viewport = {
