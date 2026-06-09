@@ -108,9 +108,45 @@ export function PortfolioChart({
   defaultRange = "1M",
 }: PortfolioChartProps) {
   const [range, setRange] = useState<Range>(defaultRange);
-  const [viewMode, setViewMode] = useState<ViewMode>("total");
-  const [ownerIdx, setOwnerIdx] = useState(0);
+  const [viewMode, setViewModeState] = useState<ViewMode>("total");
+  const [ownerIdx, setOwnerIdxState] = useState(0);
   const [hover, setHover] = useState<HoverState | null>(null);
+
+  // Persist the view mode + selected owner across reloads. SSR renders with
+  // the defaults; on mount we read localStorage and update state if the user
+  // had a prior choice. The setter wrappers save on every change. Owner is
+  // stored by name (not index) so reordering OWNERS doesn't break it.
+  useEffect(() => {
+    try {
+      const storedMode = localStorage.getItem("portfolio:viewMode");
+      if (storedMode === "total" || storedMode === "relative") {
+        setViewModeState(storedMode);
+      }
+      const storedOwner = localStorage.getItem("portfolio:owner");
+      if (storedOwner) {
+        const idx = owners.findIndex((o) => o.name === storedOwner);
+        if (idx >= 0) setOwnerIdxState(idx);
+      }
+    } catch {
+      // localStorage unavailable (e.g. private mode) — ignore.
+    }
+    // Run once on mount; owners is a stable prop in practice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const setViewMode = (v: ViewMode) => {
+    setViewModeState(v);
+    try {
+      localStorage.setItem("portfolio:viewMode", v);
+    } catch {}
+  };
+  const setOwnerIdx = (idx: number) => {
+    setOwnerIdxState(idx);
+    try {
+      const name = owners[idx]?.name;
+      if (name) localStorage.setItem("portfolio:owner", name);
+    } catch {}
+  };
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
