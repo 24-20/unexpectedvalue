@@ -11,14 +11,6 @@ export default function PercentagesPage() {
     <div className="flex-1 flex justify-center px-6">
       <div className="w-full max-w-xl border-b border-border bg-surface">
         <div className="px-5 md:px-7 pt-5 md:pt-6 pb-4 md:pb-5">
-          <div className="flex items-baseline justify-between mb-4">
-            <span className="font-mono text-[10px] uppercase tracking-widest text-muted">
-              [ Ownership ]
-            </span>
-            <span className="font-mono text-[10px] uppercase tracking-widest text-muted tabular-nums">
-              {OWNERS.length.toString().padStart(2, "0")} owners
-            </span>
-          </div>
           <div
             className="flex h-6 w-full overflow-hidden gap-px bg-border"
             role="img"
