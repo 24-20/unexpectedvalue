@@ -1,6 +1,6 @@
 import "server-only";
 import type { NextRequest } from "next/server";
-import { getLiveBalances, liveTotalNok } from "@/lib/balances";
+import { getLiveBalances, livePnlNok, liveTotalNok } from "@/lib/balances";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
     captured_at: new Date(balances.fetchedAt).toISOString(),
     hour_bucket: hourBucket(balances.fetchedAt),
     total_nok: liveTotalNok(balances),
+    pnl_nok: livePnlNok(balances),
     cash_nok: n(balances.cash.totalNok),
     polymarket_bets_nok: n(balances.polymarketBets.valueNok),
     polymarket_cash_nok: n(balances.cash.polymarketCash.nok),

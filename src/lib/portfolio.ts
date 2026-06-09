@@ -2,11 +2,17 @@ import "server-only";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
 export type Range = "1D" | "1U" | "1M";
+export type Metric = "equity" | "pnl";
 
 export const RANGES: { key: Range; label: string }[] = [
   { key: "1D", label: "Today" },
   { key: "1U", label: "1 week" },
   { key: "1M", label: "1 month" },
+];
+
+export const METRICS: { key: Metric; label: string }[] = [
+  { key: "equity", label: "Equity" },
+  { key: "pnl", label: "PnL" },
 ];
 
 export interface SeriesPoint {
@@ -22,6 +28,9 @@ export interface PortfolioSeries {
   changeAbs: number;
   changePct: number;
 }
+
+export type SeriesByRange = Record<Range, PortfolioSeries>;
+export type SeriesByMetric = Record<Metric, SeriesByRange>;
 
 const MIN_MS = 60_000;
 const HOUR_MS = 3_600_000;
@@ -41,10 +50,7 @@ const STEP_MS: Record<Range, number> = {
   "1M": 15 * MIN_MS,
 };
 
-interface RawRow {
-  hour_bucket: string;
-  total_nok: number | string | null;
-}
+type Column = "total_nok" | "pnl_nok";
 
 function buildSeries(
   range: Range,
@@ -58,15 +64,13 @@ function buildSeries(
   const stepMs = STEP_MS[range];
 
   // Hourly anchors across the range. Two regimes:
-  //  - Before firstNonZeroTime (the first time the balance ever went > 0):
-  //    missing hours stay at 0 — the user hadn't gotten money yet.
+  //  - Before firstNonZeroTime (the first non-zero value ever recorded):
+  //    missing hours stay at 0 — nothing happened yet.
   //  - At/after firstNonZeroTime: missing hours carry forward the last
   //    known value, so cron gaps render as a flat hold instead of dropping.
   const firstHour = Math.ceil(rangeStart / HOUR_MS) * HOUR_MS;
   const lastHour = Math.floor(now / HOUR_MS) * HOUR_MS;
   const anchors: SeriesPoint[] = [];
-  // Seed: if the visible range starts BEFORE the user ever had a non-zero
-  // balance, seed at 0; otherwise carry forward from the prior snapshot.
   const startBeforeFNZ =
     firstNonZeroTime != null && rangeStart < firstNonZeroTime;
   let lastKnown = startBeforeFNZ ? 0 : seedValue;
@@ -75,7 +79,6 @@ function buildSeries(
     const v = hourValues.get(h);
     if (v != null) lastKnown = v;
     if (firstNonZeroTime != null && h < firstNonZeroTime && v == null) {
-      // Pre-FNZ gap → stay at 0, don't carry forward a future value.
       anchors.push({ t: h, v: 0 });
     } else {
       anchors.push({ t: h, v: lastKnown });
@@ -123,14 +126,14 @@ function buildSeries(
     }
   }
 
-  // Anchor the % change to the FIRST non-zero point in the range — i.e. the
-  // moment the user actually had a balance. If we used points[0] here it
-  // would be 0 when the range starts pre-FNZ and the chart would derive a
-  // useless "0% change from 0 NOK" instead of "X% since first deposit".
-  const startValue = points.find((p) => p.v > 0)?.v ?? points[0]?.v ?? 0;
+  // Anchor pct to the first non-zero point. Using abs() lets negative starts
+  // produce intuitive deltas — e.g. PnL going from −500 to −300 reads as +40%
+  // (loss shrank by 40%), not −40%.
+  const startValue = points.find((p) => p.v !== 0)?.v ?? points[0]?.v ?? 0;
   const endValue = points[points.length - 1]?.v ?? 0;
   const changeAbs = endValue - startValue;
-  const changePct = startValue > 0 ? (changeAbs / startValue) * 100 : 0;
+  const changePct =
+    startValue !== 0 ? (changeAbs / Math.abs(startValue)) * 100 : 0;
 
   return { range, points, startValue, endValue, changeAbs, changePct };
 }
@@ -141,41 +144,45 @@ function parseTotal(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function getPortfolioSeries(
-  liveValue: number | null = null,
-): Promise<Record<Range, PortfolioSeries>> {
-  const now = Date.now();
-  const earliest = new Date(now - RANGE_DAYS["1M"] * DAY_MS).toISOString();
+async function loadMetricSeries(
+  column: Column,
+  liveValue: number | null,
+  now: number,
+  earliest: string,
+): Promise<SeriesByRange> {
   const supabase = getSupabaseAdmin();
 
-  // Snapshots within the visible range.
-  const { data, error } = await supabase
-    .from("portfolio_snapshots")
-    .select("hour_bucket, total_nok")
-    .gte("hour_bucket", earliest)
-    .not("total_nok", "is", null)
-    .order("hour_bucket", { ascending: true })
-    .limit(10_000);
+  // In-range snapshots, the prior anchor, and the first non-zero snapshot
+  // ever — three queries done in parallel.
+  const [inRange, priorRes, firstNonZeroRes] = await Promise.all([
+    supabase
+      .from("portfolio_snapshots")
+      .select(`hour_bucket, ${column}`)
+      .gte("hour_bucket", earliest)
+      .not(column, "is", null)
+      .order("hour_bucket", { ascending: true })
+      .limit(10_000),
+    supabase
+      .from("portfolio_snapshots")
+      .select(column)
+      .lt("hour_bucket", earliest)
+      .not(column, "is", null)
+      .order("hour_bucket", { ascending: false })
+      .limit(1),
+    supabase
+      .from("portfolio_snapshots")
+      .select("hour_bucket")
+      .not(column, "is", null)
+      .neq(column, 0)
+      .order("hour_bucket", { ascending: true })
+      .limit(1),
+  ]);
 
-  // Most recent snapshot BEFORE the range so each chart starts from the
-  // user's actual equity at range-start instead of zero.
-  const { data: priorData } = await supabase
-    .from("portfolio_snapshots")
-    .select("total_nok")
-    .lt("hour_bucket", earliest)
-    .not("total_nok", "is", null)
-    .order("hour_bucket", { ascending: false })
-    .limit(1);
-
-  // First snapshot EVER where the balance was > 0. Marks the moment the
-  // user's portfolio went from empty to non-empty; before this timestamp
-  // the chart pins to 0, after it carry-forward kicks in.
-  const { data: firstNonZeroData } = await supabase
-    .from("portfolio_snapshots")
-    .select("hour_bucket")
-    .gt("total_nok", 0)
-    .order("hour_bucket", { ascending: true })
-    .limit(1);
+  const data = inRange.data as Array<Record<string, unknown>> | null;
+  const priorData = priorRes.data as Array<Record<string, unknown>> | null;
+  const firstNonZeroData = firstNonZeroRes.data as
+    | Array<{ hour_bucket: string }>
+    | null;
 
   let firstNonZeroTime: number | null = null;
   if (firstNonZeroData && firstNonZeroData.length > 0) {
@@ -183,30 +190,28 @@ export async function getPortfolioSeries(
   }
 
   const hourValues = new Map<number, number>();
-  if (!error && data) {
-    for (const r of data as RawRow[]) {
-      const v = parseTotal(r.total_nok);
+  if (data) {
+    for (const r of data) {
+      const v = parseTotal(r[column]);
       if (v == null) continue;
-      hourValues.set(Date.parse(r.hour_bucket), v);
+      hourValues.set(Date.parse(r.hour_bucket as string), v);
     }
   }
 
-  // Build a seed value for carry-forward: prefer the snapshot just before
-  // the range, fall back to the earliest in-range snapshot, then 0.
   let seedValue = 0;
   const prior = priorData?.[0];
   if (prior) {
-    const v = parseTotal(prior.total_nok);
+    const v = parseTotal(prior[column]);
     if (v != null) seedValue = v;
   } else {
     const firstInRange = data?.[0];
     if (firstInRange) {
-      const v = parseTotal((firstInRange as RawRow).total_nok);
+      const v = parseTotal(firstInRange[column]);
       if (v != null) seedValue = v;
     }
   }
 
-  const out = {} as Record<Range, PortfolioSeries>;
+  const out = {} as SeriesByRange;
   for (const r of RANGES)
     out[r.key] = buildSeries(
       r.key,
@@ -217,4 +222,17 @@ export async function getPortfolioSeries(
       firstNonZeroTime,
     );
   return out;
+}
+
+export async function getPortfolioSeries(live: {
+  equityNok: number | null;
+  pnlNok: number | null;
+}): Promise<SeriesByMetric> {
+  const now = Date.now();
+  const earliest = new Date(now - RANGE_DAYS["1M"] * DAY_MS).toISOString();
+  const [equity, pnl] = await Promise.all([
+    loadMetricSeries("total_nok", live.equityNok, now, earliest),
+    loadMetricSeries("pnl_nok", live.pnlNok, now, earliest),
+  ]);
+  return { equity, pnl };
 }

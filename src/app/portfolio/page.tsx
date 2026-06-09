@@ -5,8 +5,8 @@ import {
   PolymarketBets,
   PortfolioChart,
 } from "@/components/blocks";
-import { RANGES, getPortfolioSeries } from "@/lib/portfolio";
-import { getLiveBalances, liveTotalNok } from "@/lib/balances";
+import { METRICS, RANGES, getPortfolioSeries } from "@/lib/portfolio";
+import { getLiveBalances, livePnlNok, liveTotalNok } from "@/lib/balances";
 
 export default function PortfolioPage() {
   return (
@@ -18,11 +18,20 @@ export default function PortfolioPage() {
 
 async function PortfolioBody() {
   const balances = await getLiveBalances();
-  const series = await getPortfolioSeries(liveTotalNok(balances));
+  const series = await getPortfolioSeries({
+    equityNok: liveTotalNok(balances),
+    pnlNok: livePnlNok(balances),
+  });
 
   return (
     <div>
-      <PortfolioChart series={series} ranges={RANGES} defaultRange="1D" />
+      <PortfolioChart
+        series={series}
+        ranges={RANGES}
+        metrics={METRICS}
+        defaultRange="1D"
+        defaultMetric="equity"
+      />
 
       <div className="pt-4 sm:pt-6 md:pt-8 pb-4 sm:pb-6 md:pb-8 relative z-[70] bg-background">
         <Container className="px-3 sm:px-6">

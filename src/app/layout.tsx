@@ -9,8 +9,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "UNX",
-  description: "Private equity / Machine learning",
+  title: "Gutta Printer",
+  description: "Norske gutta som printer der andre ikke ser.",
 };
 
 export const viewport: Viewport = {

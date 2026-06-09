@@ -23,6 +23,7 @@ export interface CustomBetsResult {
   positions: PolymarketPosition[];
   activity: ActivityEvent[];
   pendingStakeUsd: number;
+  realizedPnlUsd: number;
 }
 
 function num(v: number | string | null | undefined): number {
@@ -51,6 +52,7 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
     const positions: PolymarketPosition[] = [];
     const activity: ActivityEvent[] = [];
     let pendingStakeUsd = 0;
+    let realizedPnlUsd = 0;
 
     for (const r of rows) {
       const stake = num(r.stake_usd);
@@ -58,6 +60,18 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
       const placedMs = Date.parse(r.placed_at);
       const settledMs = r.settled_at ? Date.parse(r.settled_at) : 0;
       const settledAmount = num(r.settled_amount_usd);
+
+      // Realized PnL per status. Pending contributes 0 — custom_bets have no
+      // mark-to-market since we don't track live odds.
+      if (r.status === "won") {
+        const proceeds = settledAmount > 0 ? settledAmount : stake * odds;
+        realizedPnlUsd += proceeds - stake;
+      } else if (r.status === "lost") {
+        realizedPnlUsd -= stake;
+      } else if (r.status === "cashed_out" && settledAmount > 0) {
+        realizedPnlUsd += settledAmount - stake;
+      }
+      // void → refund, net 0
 
       // Placement event — money out
       activity.push({
@@ -165,7 +179,7 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
       }
     }
 
-    return { positions, activity, pendingStakeUsd };
+    return { positions, activity, pendingStakeUsd, realizedPnlUsd };
   } catch {
     return null;
   }

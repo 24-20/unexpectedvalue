@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
 import { formatNOK, formatPct } from "@/lib/format";
 import type {
@@ -9,6 +11,7 @@ import type {
   PolymarketPosition,
 } from "@/lib/balances";
 import { usePolledBalances } from "@/lib/useBalances";
+import { betHref } from "@/lib/betId";
 
 interface PolymarketBetsProps {
   initial: LiveBalances;
@@ -288,21 +291,31 @@ function PositionRow({
   pos: PolymarketPosition;
   usdNok: number | null;
 }) {
+  const router = useRouter();
   const up = pos.cashPnl >= 0;
   const sizeNok = usdNok != null ? pos.currentValue * usdNok : null;
   const pnlNok = usdNok != null ? pos.cashPnl * usdNok : null;
   const outcomeYes = pos.outcome.toLowerCase() === "yes";
   const multiplier = formatMultiplier(pos.avgPrice);
+  const href = betHref(pos.slug, pos.outcome);
 
   return (
-    <tr className="border-b border-border last:border-b-0">
+    <tr
+      className="border-b border-border last:border-b-0 cursor-pointer hover:bg-foreground/[0.015] transition-colors"
+      onClick={() => router.push(href)}
+      onMouseEnter={() => router.prefetch(href)}
+    >
       <td className="px-4 md:px-6 py-3 md:py-5 max-w-md">
         <div className="flex items-center gap-3 md:gap-4 min-w-0">
           <SourceIcon icon={pos.icon} source={pos.source} />
           <div className="min-w-0 flex-1">
-            <div className="text-base md:text-lg line-clamp-1 leading-tight">
+            <Link
+              href={href}
+              onClick={(e) => e.stopPropagation()}
+              className="text-base md:text-lg line-clamp-1 leading-tight"
+            >
               {pos.title}
-            </div>
+            </Link>
             {pos.source !== "polymarket" && (
               <div className="font-mono text-xs md:text-sm uppercase tracking-widest text-muted mt-0.5">
                 {pos.source}
@@ -362,14 +375,24 @@ function ActivityRow({
   now: number;
   usdNok: number | null;
 }) {
+  const router = useRouter();
   const signed = signedValueUsd(event);
   const positive = signed > 0;
   const negative = signed < 0;
   const valueNok = usdNok != null ? signed * usdNok : null;
   const action = describeAction(event);
+  const href =
+    event.slug && event.outcome ? betHref(event.slug, event.outcome) : null;
 
   return (
-    <tr className="border-b border-border last:border-b-0">
+    <tr
+      className={cn(
+        "border-b border-border last:border-b-0 transition-colors",
+        href && "cursor-pointer hover:bg-foreground/[0.015]",
+      )}
+      onClick={href ? () => router.push(href) : undefined}
+      onMouseEnter={href ? () => router.prefetch(href) : undefined}
+    >
       <td className="px-4 md:px-6 py-3 md:py-5 whitespace-nowrap">
         <div className="flex items-center gap-2 md:gap-3">
           <span
@@ -387,9 +410,19 @@ function ActivityRow({
         <div className="flex items-center gap-3 md:gap-4 min-w-0">
           <SourceIcon icon={event.icon} source={event.source} />
           <div className="min-w-0 flex-1">
-            <div className="text-base md:text-lg line-clamp-1 leading-tight">
-              {event.title ?? action.label}
-            </div>
+            {href ? (
+              <Link
+                href={href}
+                onClick={(e) => e.stopPropagation()}
+                className="text-base md:text-lg line-clamp-1 leading-tight"
+              >
+                {event.title ?? action.label}
+              </Link>
+            ) : (
+              <div className="text-base md:text-lg line-clamp-1 leading-tight">
+                {event.title ?? action.label}
+              </div>
+            )}
             {event.source !== "polymarket" && (
               <div className="font-mono text-xs md:text-sm uppercase tracking-widest text-muted mt-0.5">
                 {event.source}

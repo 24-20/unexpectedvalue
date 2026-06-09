@@ -11,6 +11,7 @@
   --border-faint: rgba(255, 255, 255, 0.05);
   --muted: rgba(255, 255, 255, 0.5);
   --muted-strong: rgba(255, 255, 255, 0.7);
+  --primary: #ffffff;
   --up: #22c55e;
   --down: #ef4444;
   --side-pad: 12px;
@@ -38,6 +39,7 @@
   --color-border-faint: var(--border-faint);
   --color-muted: var(--muted);
   --color-muted-strong: var(--muted-strong);
+  --color-primary: var(--primary);
   --color-up: var(--up);
   --color-down: var(--down);
   --font-sans: "Satoshi", var(--font-geist-sans), system-ui, -apple-system,

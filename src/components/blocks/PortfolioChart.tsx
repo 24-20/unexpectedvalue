@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AreaSeries,
   CrosshairMode,
-  LineSeries,
   LineStyle,
   createChart,
   type IChartApi,
@@ -18,13 +18,15 @@ import {
   formatNOKDelta,
   formatPct,
 } from "@/lib/format";
-import type { PortfolioSeries, Range } from "@/lib/portfolio";
+import type { Metric, Range, SeriesByMetric } from "@/lib/portfolio";
 import { Mono } from "@/components/ui";
 
 interface PortfolioChartProps {
-  series: Record<Range, PortfolioSeries>;
+  series: SeriesByMetric;
   ranges: { key: Range; label: string }[];
+  metrics: { key: Metric; label: string }[];
   defaultRange?: Range;
+  defaultMetric?: Metric;
 }
 
 interface HoverState {
@@ -40,6 +42,7 @@ interface ThemeColors {
   surface: string;
   border: string;
   muted: string;
+  primary: string;
   up: string;
   down: string;
 }
@@ -67,6 +70,7 @@ function readThemeColors(): ThemeColors {
     surface: "#ffffff",
     border: "#e5e5e5",
     muted: "#737373",
+    primary: "#f43f5e",
     up: "#16a34a",
     down: "#dc2626",
   };
@@ -78,6 +82,7 @@ function readThemeColors(): ThemeColors {
     surface: root.getPropertyValue("--surface").trim() || fallback.surface,
     border: root.getPropertyValue("--border").trim() || fallback.border,
     muted: root.getPropertyValue("--muted").trim() || fallback.muted,
+    primary: root.getPropertyValue("--primary").trim() || fallback.primary,
     up: root.getPropertyValue("--up").trim() || fallback.up,
     down: root.getPropertyValue("--down").trim() || fallback.down,
   };
@@ -86,23 +91,26 @@ function readThemeColors(): ThemeColors {
 export function PortfolioChart({
   series,
   ranges,
+  metrics,
   defaultRange = "1M",
+  defaultMetric = "equity",
 }: PortfolioChartProps) {
   const [range, setRange] = useState<Range>(defaultRange);
+  const [metric, setMetric] = useState<Metric>(defaultMetric);
   const [hover, setHover] = useState<HoverState | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const themeRef = useRef<ThemeColors>(readThemeColors());
   const rangeRef = useRef<Range>(range);
   useEffect(() => {
     rangeRef.current = range;
   }, [range]);
 
-  const active = series[range];
+  const activeSet = series[metric];
+  const active = activeSet[range];
   const base = active.startValue;
-  const directionUp = active.changePct >= 0;
 
   const chartData = useMemo(() => {
     // Plot absolute NOK values so the line keeps its shape even when the
@@ -124,7 +132,7 @@ export function PortfolioChart({
     if (!containerRef.current) return;
     const colors = readThemeColors();
     themeRef.current = colors;
-    const initialLineColor = directionUp ? colors.up : colors.down;
+    const initialLineColor = colors.primary;
 
     const chart = createChart(containerRef.current, {
       autoSize: true,
@@ -186,8 +194,10 @@ export function PortfolioChart({
       kineticScroll: { mouse: false, touch: false },
     });
 
-    const lineSeries = chart.addSeries(LineSeries, {
-      color: initialLineColor,
+    const areaSeries = chart.addSeries(AreaSeries, {
+      lineColor: initialLineColor,
+      topColor: "rgba(255, 255, 255, 0.22)",
+      bottomColor: "rgba(255, 255, 255, 0)",
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
@@ -204,7 +214,7 @@ export function PortfolioChart({
     });
 
     chartRef.current = chart;
-    seriesRef.current = lineSeries;
+    seriesRef.current = areaSeries;
 
     // Drive the crosshair manually on touch so it appears immediately —
     // lightweight-charts' built-in tracking mode requires a ~1s long press.
@@ -234,7 +244,8 @@ export function PortfolioChart({
       if (absValue === undefined) return;
 
       const startVal = baseRef.current;
-      const pct = startVal > 0 ? ((absValue - startVal) / startVal) * 100 : 0;
+      const pct =
+        startVal !== 0 ? ((absValue - startVal) / Math.abs(startVal)) * 100 : 0;
       const delta = absValue - startVal;
 
       chartRef.current.setCrosshairPosition(
@@ -264,7 +275,8 @@ export function PortfolioChart({
         return;
       }
       const startVal = baseRef.current;
-      const pct = startVal > 0 ? ((absValue - startVal) / startVal) * 100 : 0;
+      const pct =
+        startVal !== 0 ? ((absValue - startVal) / Math.abs(startVal)) * 100 : 0;
       const delta = absValue - startVal;
       setHover({ t: t * 1000, value: absValue, pct, delta });
     });
@@ -288,11 +300,6 @@ export function PortfolioChart({
 
   useEffect(() => {
     if (!seriesRef.current) return;
-    const color = directionUp ? themeRef.current.up : themeRef.current.down;
-    seriesRef.current.applyOptions({
-      color,
-      crosshairMarkerBackgroundColor: color,
-    });
     seriesRef.current.setData(chartData);
     chartRef.current?.timeScale().fitContent();
     setHover(null);
@@ -304,7 +311,7 @@ export function PortfolioChart({
       chartRef.current?.timeScale().fitContent();
     });
     return () => cancelAnimationFrame(raf);
-  }, [chartData, directionUp]);
+  }, [chartData]);
 
   const display = hover ?? {
     t: active.points[active.points.length - 1]?.t ?? 0,
@@ -313,8 +320,12 @@ export function PortfolioChart({
     delta: active.changeAbs,
   };
   const rangeLabel = ranges.find((r) => r.key === range)?.label ?? "";
+  const metricLabel = metrics.find((m) => m.key === metric)?.label ?? "";
   const isUp = display.delta >= 0;
   const deltaTone = isUp ? "text-up" : "text-down";
+  // Equity is always positive — show the raw amount. PnL is signed by nature,
+  // so prefix +/− to make the direction obvious at a glance.
+  const formatValue = metric === "pnl" ? formatNOKDelta : formatNOK;
 
   return (
     <div className="border-b border-border">
@@ -323,9 +334,9 @@ export function PortfolioChart({
           <div className="p-6 border-b border-border">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <Mono className="text-muted">Equity</Mono>
+                <Mono className="text-muted">{metricLabel}</Mono>
                 <div className="mt-2 text-4xl md:text-5xl font-medium tabular-nums tracking-tight">
-                  {formatNOK(display.value)}
+                  {formatValue(display.value)}
                 </div>
                 <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
                   <span className="text-muted">
@@ -339,6 +350,11 @@ export function PortfolioChart({
                   </div>
                 </div>
               </div>
+              <MetricDropdown
+                metric={metric}
+                metrics={metrics}
+                onChange={setMetric}
+              />
             </div>
           </div>
 
@@ -350,7 +366,7 @@ export function PortfolioChart({
           <div className="p-3 md:p-4 flex flex-wrap gap-2">
             {ranges.map((r) => {
               const isActive = r.key === range;
-              const s = series[r.key];
+              const s = activeSet[r.key];
               const up = s.changePct >= 0;
               return (
                 <button
@@ -381,6 +397,93 @@ export function PortfolioChart({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function MetricDropdown({
+  metric,
+  metrics,
+  onChange,
+}: {
+  metric: Metric;
+  metrics: { key: Metric; label: string }[];
+  onChange: (m: Metric) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = metrics.find((m) => m.key === metric)?.label ?? "";
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="font-mono text-[10px] uppercase tracking-widest rounded-lg bg-foreground/[0.05] text-muted px-3 py-2 hover:bg-foreground/10 hover:text-foreground flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
+      >
+        <span>{current}</span>
+        <span
+          aria-hidden
+          className={cn(
+            "transition-transform leading-none",
+            open && "rotate-180",
+          )}
+        >
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute right-0 top-full mt-1 rounded-lg bg-surface-elevated min-w-[140px] z-20 overflow-hidden p-1"
+        >
+          {metrics.map((m) => {
+            const selected = m.key === metric;
+            return (
+              <button
+                key={m.key}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(m.key);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex items-center justify-between gap-3 w-full text-left font-mono text-[10px] uppercase tracking-widest rounded-lg px-3 py-2 whitespace-nowrap cursor-pointer transition-colors",
+                  selected
+                    ? "text-foreground"
+                    : "text-muted hover:bg-foreground/10 hover:text-foreground",
+                )}
+              >
+                <span>{m.label}</span>
+                <span
+                  aria-hidden
+                  className={cn(
+                    "leading-none",
+                    selected ? "opacity-100" : "opacity-0",
+                  )}
+                >
+                  ✓
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -105,6 +105,7 @@ export interface LiveBalances {
     activity: ActivityEvent[] | null;
     address: string;
   };
+  customBetsRealizedPnlUsd: number | null;
   rates: { solUsd: number | null; usdNok: number | null };
 }
 
@@ -277,6 +278,72 @@ async function fetchPolymarketCashUsdc(): Promise<number | null> {
   return parts.reduce((s, v) => s + v, 0);
 }
 
+export interface PolymarketMarketInfo {
+  slug: string;
+  question: string | null;
+  image: string | null;
+  icon: string | null;
+  endDate: string | null;
+  closed: boolean;
+  outcomes: string[];
+  outcomePrices: number[];
+  winningOutcome: string | null;
+}
+
+interface RawGammaMarket {
+  slug?: string;
+  question?: string;
+  image?: string;
+  icon?: string;
+  endDate?: string;
+  endDateIso?: string;
+  closed?: boolean;
+  outcomes?: string | string[];
+  outcomePrices?: string | string[];
+}
+
+function parseJsonArray(v: string | string[] | undefined): string[] {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+export async function fetchPolymarketMarket(
+  slug: string,
+): Promise<PolymarketMarketInfo | null> {
+  if (!slug) return null;
+  const url = `https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(slug)}`;
+  const res = await safeFetch(url, { next: { revalidate: 300 } });
+  const data = await safeJson<RawGammaMarket[]>(res);
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const m = data[0];
+  const outcomes = parseJsonArray(m.outcomes);
+  const prices = parseJsonArray(m.outcomePrices).map((p) => Number(p));
+  let winningOutcome: string | null = null;
+  if (m.closed && outcomes.length > 0 && prices.length === outcomes.length) {
+    const winIdx = prices.findIndex((p) => p >= 0.5);
+    if (winIdx >= 0) winningOutcome = outcomes[winIdx];
+  }
+  return {
+    slug: m.slug ?? slug,
+    question: m.question ?? null,
+    image: m.image ?? null,
+    icon: m.icon ?? null,
+    endDate: m.endDateIso ?? m.endDate ?? null,
+    closed: !!m.closed,
+    outcomes,
+    outcomePrices: prices,
+    winningOutcome,
+  };
+}
+
 async function fetchPolymarketBetsUsd(): Promise<number | null> {
   const url = `https://data-api.polymarket.com/value?user=${POLYMARKET_ADDRESS}`;
   const res = await safeFetch(url, {
@@ -343,7 +410,10 @@ const KNOWN_ACTIVITY_TYPES = new Set<ActivityType>([
 ]);
 
 async function fetchActivity(): Promise<ActivityEvent[] | null> {
-  const url = `https://data-api.polymarket.com/activity?user=${POLYMARKET_ADDRESS}&limit=50`;
+  // Limit deliberately wide — livePnlNok walks this for realized PnL, so the
+  // window has to cover every BUY/SELL/REDEEM the user has ever done.
+  // Paginate if/when accounts exceed 500 events.
+  const url = `https://data-api.polymarket.com/activity?user=${POLYMARKET_ADDRESS}&limit=500`;
   const res = await safeFetch(url, {
     next: { revalidate: REVALIDATE_BALANCES },
   });
@@ -544,6 +614,7 @@ export async function getLiveBalances(): Promise<LiveBalances> {
       activity,
       address: POLYMARKET_ADDRESS,
     },
+    customBetsRealizedPnlUsd: customBets?.realizedPnlUsd ?? null,
     rates,
   };
 }
@@ -553,4 +624,44 @@ export function liveTotalNok(b: LiveBalances): number | null {
   const bets = b.polymarketBets.valueNok;
   if (cash == null && bets == null) return null;
   return (cash ?? 0) + (bets ?? 0);
+}
+
+// Lifetime betting PnL in NOK. Computed as
+//   −buys + sells + redeems + rewards + currentValue(open positions) + customRealized
+// across Polymarket. The activity walk picks up history that has dropped off
+// the /positions API (redeemed winners stop appearing once you claim), while
+// the currentValue sum picks up MTM of positions still on the book. Custom
+// bets stay summed as realized — pending custom bets have no live odds, so
+// no MTM. Returns null if the FX rate is missing or we couldn't load any
+// bet data.
+export function livePnlNok(b: LiveBalances): number | null {
+  const { usdNok } = b.rates;
+  if (usdNok == null) return null;
+
+  let pnlUsd = 0;
+  let hasData = false;
+
+  if (b.polymarketBets.activity != null) {
+    for (const a of b.polymarketBets.activity) {
+      if (a.source !== "polymarket") continue;
+      if (a.type === "TRADE" && a.side === "BUY") pnlUsd -= a.usdcSize;
+      else if (a.type === "TRADE" && a.side === "SELL") pnlUsd += a.usdcSize;
+      else if (a.type === "REDEEM" || a.type === "REWARD") pnlUsd += a.usdcSize;
+    }
+    hasData = true;
+  }
+  if (b.polymarketBets.positions != null) {
+    for (const p of b.polymarketBets.positions) {
+      if (p.source !== "polymarket") continue;
+      pnlUsd += p.currentValue ?? 0;
+    }
+    hasData = true;
+  }
+  if (b.customBetsRealizedPnlUsd != null) {
+    pnlUsd += b.customBetsRealizedPnlUsd;
+    hasData = true;
+  }
+
+  if (!hasData) return null;
+  return pnlUsd * usdNok;
 }
