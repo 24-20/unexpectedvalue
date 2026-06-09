@@ -11,7 +11,6 @@ interface VerifyMetric {
 interface VerifyLink {
   network: string;
   label: string;
-  description: string;
   href: string;
   explorer: string;
   address: string;
@@ -24,7 +23,6 @@ function buildLinks(b: LiveBalances): VerifyLink[] {
     {
       network: "Solana",
       label: "Phantom wallet",
-      description: "Cash and stablecoin balances.",
       href: `https://solscan.io/account/${b.cash.phantom.address}`,
       explorer: "Open on Solscan",
       address: b.cash.phantom.address,
@@ -34,7 +32,6 @@ function buildLinks(b: LiveBalances): VerifyLink[] {
     {
       network: "Polygon",
       label: "Polymarket account",
-      description: "Open positions, full history, and resting cash.",
       href: `https://polymarket.com/profile/${b.polymarketBets.address}`,
       explorer: "Open on Polymarket",
       address: b.polymarketBets.address,
@@ -60,14 +57,7 @@ export default async function VerifyPage() {
     <div className="flex-1">
       <Container className="py-12 md:py-20 px-6 sm:px-10 md:px-16">
         <div className="max-w-2xl">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-normal tracking-[-0.01em] leading-[1.1]">
-            Trust, but{" "}
-            <span className="underline decoration-2 underline-offset-[6px]">
-              verify
-            </span>
-            .
-          </h1>
-          <p className="mt-5 text-base sm:text-lg text-muted max-w-xl leading-relaxed">
+          <p className="text-base sm:text-lg text-muted max-w-xl leading-relaxed">
             The dashboard reads live from the two wallets below. Every transaction and bet is
             on-chain. Public, permanent, and verifiable by anyone.
           </p>
@@ -93,10 +83,6 @@ export default async function VerifyPage() {
                     </div>
                   </div>
                 </div>
-
-                <p className="mt-4 text-sm text-muted leading-relaxed">
-                  {l.description}
-                </p>
 
                 <dl className="mt-5 space-y-1.5 font-mono text-xs sm:text-sm tabular-nums">
                   {l.metrics.map((m) => (
