@@ -304,12 +304,15 @@ function PositionRow({
 }) {
   const router = useRouter();
   const up = pos.cashPnl >= 0;
-  const sizeNok = usdNok != null ? pos.currentValue * usdNok : null;
+  const stakeNok = usdNok != null ? pos.initialValue * usdNok : null;
+  const payoutNok = usdNok != null ? pos.size * usdNok : null;
+  const currentValueNok = usdNok != null ? pos.currentValue * usdNok : null;
   const pnlNok = usdNok != null ? pos.cashPnl * usdNok : null;
-  const outcomeYes = pos.outcome.toLowerCase() === "yes";
   const multiplier = formatMultiplier(pos.avgPrice);
   const portfolioShare =
-    sizeNok != null ? formatPortfolioShare(sizeNok, portfolioTotalNok) : null;
+    currentValueNok != null
+      ? formatPortfolioShare(currentValueNok, portfolioTotalNok)
+      : null;
   const href = betHref(pos.slug, pos.outcome);
 
   return (
@@ -321,7 +324,7 @@ function PositionRow({
       <td className="px-4 md:px-6 py-4 md:py-6">
         <div className="flex items-start gap-3 md:gap-4 min-w-0">
           <SourceIcon icon={pos.icon} source={pos.source} />
-          <div className="flex-1 min-w-0 flex flex-col gap-2 md:gap-2.5">
+          <div className="flex-1 min-w-0 flex flex-col gap-3 md:gap-3.5">
             <Link
               href={href}
               onClick={(e) => e.stopPropagation()}
@@ -329,6 +332,45 @@ function PositionRow({
             >
               {pos.title}
             </Link>
+
+            <div className="grid grid-cols-3 gap-3 md:gap-6">
+              <HeroStat
+                label="Amount"
+                value={stakeNok != null ? formatNOK(stakeNok) : "—"}
+              />
+              <HeroStat label="Multiplier" value={multiplier ?? "—"} />
+              <HeroStat
+                label="Payout"
+                value={payoutNok != null ? formatNOK(payoutNok) : "—"}
+              />
+            </div>
+
+            <div className="flex items-center flex-wrap gap-x-2 gap-y-1 font-mono text-[11px] md:text-xs uppercase tracking-widest">
+              <span className="text-muted">
+                Betting{" "}
+                <span className="text-foreground font-medium">
+                  {pos.outcome}
+                </span>
+              </span>
+              {portfolioShare && (
+                <>
+                  <span aria-hidden className="text-muted opacity-50">
+                    ·
+                  </span>
+                  <span className="text-muted tabular-nums">
+                    {portfolioShare} of portfolio
+                  </span>
+                </>
+              )}
+              {pos.source !== "polymarket" && (
+                <>
+                  <span aria-hidden className="text-muted opacity-50">
+                    ·
+                  </span>
+                  <span className="text-muted">{pos.source}</span>
+                </>
+              )}
+            </div>
 
             <div
               className={cn(
@@ -344,48 +386,23 @@ function PositionRow({
                 PnL
               </span>
             </div>
-
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <span
-                className={cn(
-                  "font-mono text-[10px] md:text-xs uppercase tracking-widest border border-border px-2 md:px-2.5 py-0.5 md:py-1 inline-block",
-                  outcomeYes
-                    ? "bg-foreground text-background"
-                    : "bg-background text-foreground",
-                )}
-              >
-                {pos.outcome}
-              </span>
-              {multiplier && (
-                <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted-strong tabular-nums">
-                  <span className="text-muted">Odds</span> {multiplier}
-                </span>
-              )}
-              {pos.source !== "polymarket" && (
-                <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted">
-                  {pos.source}
-                </span>
-              )}
-            </div>
-
-            {portfolioShare && (
-              <div className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted tabular-nums">
-                {portfolioShare} of portfolio
-              </div>
-            )}
-
-            {sizeNok != null && (
-              <div className="font-mono text-xs md:text-sm tabular-nums text-muted-strong">
-                <span className="text-muted uppercase tracking-widest text-[10px] md:text-xs">
-                  Amount
-                </span>{" "}
-                {formatNOK(sizeNok)}
-              </div>
-            )}
           </div>
         </div>
       </td>
     </tr>
+  );
+}
+
+function HeroStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5 md:gap-1 min-w-0">
+      <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted truncate">
+        {label}
+      </span>
+      <span className="font-mono text-base md:text-xl tabular-nums tracking-tight font-medium truncate">
+        {value}
+      </span>
+    </div>
   );
 }
 
