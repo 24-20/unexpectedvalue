@@ -8,7 +8,8 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
         type={type}
         ref={ref}
         className={cn(
-          "flex h-10 w-full bg-surface border border-border px-3 py-2 text-sm",
+          // text-base (16px) prevents iOS Safari from zooming the page on focus.
+          "flex h-11 w-full bg-surface border border-border px-3 py-2 text-base",
           "font-mono tabular-nums",
           "placeholder:text-muted",
           "focus-visible:outline-none focus-visible:border-foreground/60 focus-visible:bg-surface-elevated",

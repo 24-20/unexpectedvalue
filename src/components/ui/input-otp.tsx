@@ -14,7 +14,8 @@ const InputOTP = React.forwardRef<
       "flex items-center gap-2 has-[:disabled]:opacity-40",
       containerClassName,
     )}
-    className={cn("disabled:cursor-not-allowed", className)}
+    // text-base on the underlying hidden input prevents iOS Safari zoom-on-focus.
+    className={cn("text-base disabled:cursor-not-allowed", className)}
     {...props}
   />
 ));
