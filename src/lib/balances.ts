@@ -1,4 +1,5 @@
 import "server-only";
+import { fetchCustomBets } from "@/lib/customBets";
 
 const POLYMARKET_ADDRESS =
   process.env.POLYMARKET_ADDRESS ?? "0xdee67d2c135d1c374bbb5ec52ed22cee0edb782f";
@@ -33,6 +34,7 @@ const POLYMARKET_BRIDGE_SVM =
   "3ADZFsTweYNgcLUYDJHTAZV9AsJX1KJN3WJC4zQ9x9ja";
 
 export interface PolymarketPosition {
+  source: string; // "polymarket" or bookie name (e.g., "Roobet")
   title: string;
   slug: string;
   icon: string | null;
@@ -46,6 +48,33 @@ export interface PolymarketPosition {
   percentPnl: number;
   endDate: string | null;
   redeemable: boolean;
+  status: "open" | "closed";
+}
+
+export type ActivityType =
+  | "TRADE"
+  | "DEPOSIT"
+  | "WITHDRAWAL"
+  | "REDEEM"
+  | "MERGE"
+  | "SPLIT"
+  | "CONVERSION"
+  | "REWARD"
+  | "OTHER";
+
+export interface ActivityEvent {
+  source: string; // "polymarket" or bookie name
+  timestamp: number; // ms
+  type: ActivityType;
+  side: "BUY" | "SELL" | null;
+  usdcSize: number;
+  title: string | null;
+  slug: string | null;
+  icon: string | null;
+  outcome: string | null;
+  price: number | null;
+  shares: number | null;
+  txHash: string | null;
 }
 
 export interface LiveBalances {
@@ -69,6 +98,7 @@ export interface LiveBalances {
     valueUsd: number | null;
     valueNok: number | null;
     positions: PolymarketPosition[] | null;
+    activity: ActivityEvent[] | null;
     address: string;
   };
   rates: { solUsd: number | null; usdNok: number | null };
@@ -242,30 +272,111 @@ interface RawPolymarketPosition {
   redeemable?: boolean;
 }
 
+function classifyStatus(p: {
+  redeemable: boolean;
+  curPrice: number;
+}): "open" | "closed" {
+  // Reliable signals only:
+  //  - redeemable=true: market resolved in user's favor, USDC claimable
+  //  - curPrice exactly 0: losing side of a resolved market (tokens are worthless)
+  // endDate and near-extreme prices are unreliable — markets keep trading
+  // past their listed end date, and active markets can sit at 0.99 / 0.01.
+  if (p.redeemable) return "closed";
+  if (p.curPrice === 0) return "closed";
+  return "open";
+}
+
+interface RawActivityEvent {
+  timestamp?: number;
+  type?: string;
+  side?: string;
+  usdcSize?: number;
+  size?: number;
+  price?: number;
+  title?: string;
+  slug?: string;
+  icon?: string;
+  outcome?: string;
+  transactionHash?: string;
+}
+
+const KNOWN_ACTIVITY_TYPES = new Set<ActivityType>([
+  "TRADE",
+  "DEPOSIT",
+  "WITHDRAWAL",
+  "REDEEM",
+  "MERGE",
+  "SPLIT",
+  "CONVERSION",
+  "REWARD",
+]);
+
+async function fetchActivity(): Promise<ActivityEvent[] | null> {
+  const url = `https://data-api.polymarket.com/activity?user=${POLYMARKET_ADDRESS}&limit=50`;
+  const res = await safeFetch(url, {
+    next: { revalidate: REVALIDATE_BALANCES },
+  });
+  const data = await safeJson<RawActivityEvent[]>(res);
+  if (!Array.isArray(data)) return null;
+  return data.map<ActivityEvent>((e) => {
+    const rawType = (e.type ?? "OTHER").toUpperCase();
+    const type: ActivityType = KNOWN_ACTIVITY_TYPES.has(rawType as ActivityType)
+      ? (rawType as ActivityType)
+      : "OTHER";
+    const rawSide = (e.side ?? "").toUpperCase();
+    const side: "BUY" | "SELL" | null =
+      rawSide === "BUY" || rawSide === "SELL" ? rawSide : null;
+    return {
+      source: "polymarket",
+      timestamp: typeof e.timestamp === "number" ? e.timestamp * 1000 : 0,
+      type,
+      side,
+      usdcSize: typeof e.usdcSize === "number" ? e.usdcSize : 0,
+      title: e.title ?? null,
+      slug: e.slug ?? null,
+      icon: e.icon ?? null,
+      outcome: e.outcome ?? null,
+      price: typeof e.price === "number" ? e.price : null,
+      shares: typeof e.size === "number" ? e.size : null,
+      txHash: e.transactionHash ?? null,
+    };
+  });
+}
+
 async function fetchPolymarketPositions(): Promise<
   PolymarketPosition[] | null
 > {
-  const url = `https://data-api.polymarket.com/positions?user=${POLYMARKET_ADDRESS}&limit=200&sortBy=CURRENT&sortDirection=DESC`;
+  const url = `https://data-api.polymarket.com/positions?user=${POLYMARKET_ADDRESS}&limit=200&sortBy=CURRENT&sortDirection=DESC&sizeThreshold=0`;
   const res = await safeFetch(url, {
     next: { revalidate: REVALIDATE_BALANCES },
   });
   const data = await safeJson<RawPolymarketPosition[]>(res);
   if (!Array.isArray(data)) return null;
-  return data.map((p) => ({
-    title: p.title ?? "Unknown market",
-    slug: p.slug ?? "",
-    icon: p.icon ?? null,
-    outcome: p.outcome ?? "?",
-    size: typeof p.size === "number" ? p.size : 0,
-    avgPrice: typeof p.avgPrice === "number" ? p.avgPrice : 0,
-    curPrice: typeof p.curPrice === "number" ? p.curPrice : 0,
-    initialValue: typeof p.initialValue === "number" ? p.initialValue : 0,
-    currentValue: typeof p.currentValue === "number" ? p.currentValue : 0,
-    cashPnl: typeof p.cashPnl === "number" ? p.cashPnl : 0,
-    percentPnl: typeof p.percentPnl === "number" ? p.percentPnl : 0,
-    endDate: p.endDate ?? null,
-    redeemable: !!p.redeemable,
-  }));
+  return data.map((p) => {
+    const core = {
+      source: "polymarket",
+      title: p.title ?? "Unknown market",
+      slug: p.slug ?? "",
+      icon: p.icon ?? null,
+      outcome: p.outcome ?? "?",
+      size: typeof p.size === "number" ? p.size : 0,
+      avgPrice: typeof p.avgPrice === "number" ? p.avgPrice : 0,
+      curPrice: typeof p.curPrice === "number" ? p.curPrice : 0,
+      initialValue: typeof p.initialValue === "number" ? p.initialValue : 0,
+      currentValue: typeof p.currentValue === "number" ? p.currentValue : 0,
+      cashPnl: typeof p.cashPnl === "number" ? p.cashPnl : 0,
+      percentPnl: typeof p.percentPnl === "number" ? p.percentPnl : 0,
+      endDate: p.endDate ?? null,
+      redeemable: !!p.redeemable,
+    };
+    return {
+      ...core,
+      status: classifyStatus({
+        redeemable: core.redeemable,
+        curPrice: core.curPrice,
+      }),
+    };
+  });
 }
 
 async function fetchSolBalance(): Promise<number | null> {
@@ -330,15 +441,38 @@ function sumOrNull(parts: Array<number | null>): number | null {
 }
 
 export async function getLiveBalances(): Promise<LiveBalances> {
-  const [polyBetsUsd, polyCashUsdc, positions, sol, stableUsd, rates] =
-    await Promise.all([
-      fetchPolymarketBetsUsd(),
-      fetchPolymarketCashUsdc(),
-      fetchPolymarketPositions(),
-      fetchSolBalance(),
-      fetchStableUsd(),
-      fetchRates(),
-    ]);
+  const [
+    polyBetsUsd,
+    polyCashUsdc,
+    polyPositions,
+    polyActivity,
+    customBets,
+    sol,
+    stableUsd,
+    rates,
+  ] = await Promise.all([
+    fetchPolymarketBetsUsd(),
+    fetchPolymarketCashUsdc(),
+    fetchPolymarketPositions(),
+    fetchActivity(),
+    fetchCustomBets(),
+    fetchSolBalance(),
+    fetchStableUsd(),
+    fetchRates(),
+  ]);
+
+  // Merge Polymarket + custom bets
+  const positions: PolymarketPosition[] | null =
+    polyPositions == null && customBets == null
+      ? null
+      : [...(polyPositions ?? []), ...(customBets?.positions ?? [])];
+  const activity: ActivityEvent[] | null =
+    polyActivity == null && customBets == null
+      ? null
+      : [...(polyActivity ?? []), ...(customBets?.activity ?? [])].sort(
+          (a, b) => b.timestamp - a.timestamp,
+        );
+  const totalBetsUsd = sumOrNull([polyBetsUsd, customBets?.pendingStakeUsd ?? null]);
 
   const { usdNok, solUsd } = rates;
 
@@ -353,7 +487,7 @@ export async function getLiveBalances(): Promise<LiveBalances> {
   const cashTotalNok = sumOrNull([polyCashNok, phantomNok]);
 
   const betsValueNok =
-    polyBetsUsd != null && usdNok != null ? polyBetsUsd * usdNok : null;
+    totalBetsUsd != null && usdNok != null ? totalBetsUsd * usdNok : null;
 
   return {
     fetchedAt: Date.now(),
@@ -373,11 +507,19 @@ export async function getLiveBalances(): Promise<LiveBalances> {
       },
     },
     polymarketBets: {
-      valueUsd: polyBetsUsd,
+      valueUsd: totalBetsUsd,
       valueNok: betsValueNok,
       positions,
+      activity,
       address: POLYMARKET_ADDRESS,
     },
     rates,
   };
+}
+
+export function liveTotalNok(b: LiveBalances): number | null {
+  const cash = b.cash.totalNok;
+  const bets = b.polymarketBets.valueNok;
+  if (cash == null && bets == null) return null;
+  return (cash ?? 0) + (bets ?? 0);
 }

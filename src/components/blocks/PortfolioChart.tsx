@@ -8,11 +8,12 @@ import {
   createChart,
   type IChartApi,
   type ISeriesApi,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 import { cn } from "@/lib/cn";
 import {
-  formatDateNo,
+  formatDateTime,
   formatNOK,
   formatNOKDelta,
   formatPct,
@@ -41,6 +42,22 @@ interface ThemeColors {
   muted: string;
   up: string;
   down: string;
+}
+
+function findNearestKey(
+  map: Map<number, number>,
+  target: number,
+): number | null {
+  let best: number | null = null;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  for (const k of map.keys()) {
+    const diff = Math.abs(k - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = k;
+    }
+  }
+  return best;
 }
 
 function readThemeColors(): ThemeColors {
@@ -78,9 +95,13 @@ export function PortfolioChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const themeRef = useRef<ThemeColors>(readThemeColors());
+  const rangeRef = useRef<Range>(range);
+  useEffect(() => {
+    rangeRef.current = range;
+  }, [range]);
 
   const active = series[range];
-  const base = active.points[0]?.v ?? 0;
+  const base = active.startValue;
   const directionUp = active.changePct >= 0;
 
   const chartData = useMemo(() => {
@@ -117,13 +138,30 @@ export function PortfolioChart({
       },
       rightPriceScale: {
         visible: false,
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.15,
+        },
       },
       timeScale: {
         borderVisible: false,
         fixLeftEdge: true,
         fixRightEdge: true,
-        timeVisible: false,
+        timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: Time) => {
+          if (typeof time !== "number") return "";
+          const d = new Date(time * 1000);
+          if (rangeRef.current === "1D") {
+            const h = d.getHours().toString().padStart(2, "0");
+            const m = d.getMinutes().toString().padStart(2, "0");
+            return `${h}:${m}`;
+          }
+          return d.toLocaleDateString("en-US", {
+            day: "numeric",
+            month: "short",
+          });
+        },
       },
       crosshair: {
         mode: CrosshairMode.Magnet,
@@ -169,6 +207,47 @@ export function PortfolioChart({
     chartRef.current = chart;
     seriesRef.current = lineSeries;
 
+    // Drive the crosshair manually on touch so it appears immediately —
+    // lightweight-charts' built-in tracking mode requires a ~1s long press.
+    // setCrosshairPosition does NOT fire subscribeCrosshairMove, so we also
+    // compute the displayed values here ourselves.
+    const container = containerRef.current;
+    function handleTouch(e: TouchEvent) {
+      if (
+        e.touches.length !== 1 ||
+        !container ||
+        !chartRef.current ||
+        !seriesRef.current
+      ) {
+        return;
+      }
+      const touch = e.touches[0];
+      const rect = container.getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const rawTime = chartRef.current.timeScale().coordinateToTime(x);
+      if (typeof rawTime !== "number") return;
+
+      // Snap to the nearest data point so the displayed value lines up with
+      // the crosshair marker.
+      const snapped = findNearestKey(absLookupRef.current, rawTime);
+      if (snapped == null) return;
+      const absValue = absLookupRef.current.get(snapped);
+      if (absValue === undefined) return;
+
+      const startVal = baseRef.current;
+      const pct = startVal > 0 ? ((absValue - startVal) / startVal) * 100 : 0;
+      const delta = absValue - startVal;
+
+      chartRef.current.setCrosshairPosition(
+        pct,
+        snapped as Time,
+        seriesRef.current,
+      );
+      setHover({ t: snapped * 1000, value: absValue, pct, delta });
+    }
+    container.addEventListener("touchstart", handleTouch, { passive: true });
+    container.addEventListener("touchmove", handleTouch, { passive: true });
+
     chart.subscribeCrosshairMove((param) => {
       if (!param.time || !seriesRef.current) {
         setHover(null);
@@ -192,6 +271,8 @@ export function PortfolioChart({
     });
 
     return () => {
+      container.removeEventListener("touchstart", handleTouch);
+      container.removeEventListener("touchmove", handleTouch);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
@@ -235,20 +316,17 @@ export function PortfolioChart({
           <div className="p-6 border-b border-border">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <Mono className="text-muted">Egenkapital</Mono>
+                <Mono className="text-muted">Equity</Mono>
                 <div className="mt-2 text-4xl md:text-5xl font-medium tabular-nums tracking-tight">
                   {formatNOK(display.value)}
                 </div>
                 <div className="mt-2 flex flex-wrap items-baseline gap-3 font-mono text-sm tabular-nums">
                   <span className="text-muted">
-                    {hover ? formatDateNo(display.t) : rangeLabel}
+                    {hover ? formatDateTime(display.t) : rangeLabel}
                   </span>
                   <span className={deltaTone}>{formatPct(display.pct)}</span>
                   <span className={deltaTone}>
                     {formatNOKDelta(display.delta)}
-                  </span>
-                  <span aria-hidden className={cn(deltaTone, "opacity-80")}>
-                    {isUp ? "▲" : "▼"}
                   </span>
                 </div>
               </div>
@@ -257,7 +335,7 @@ export function PortfolioChart({
 
           <div
             ref={containerRef}
-            className="h-[300px] md:h-[420px] w-full touch-none"
+            className="h-[300px] md:h-[420px] w-full touch-none px-3 sm:px-6"
           />
 
           <div className="border-t border-border p-3 md:p-4 flex flex-wrap gap-2">

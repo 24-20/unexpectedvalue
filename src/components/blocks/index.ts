@@ -1,5 +1,5 @@
 export { Hero } from "./Hero";
 export { PortfolioChart } from "./PortfolioChart";
-export { AllocationDonut } from "./AllocationDonut";
-export { LiveBalances } from "./LiveBalances";
+export { Holdings } from "./Holdings";
 export { PolymarketBets } from "./PolymarketBets";
+export { AsciiBackdrop } from "./AsciiBackdrop";

@@ -27,12 +27,6 @@ export function Nav() {
               {l.label}
             </Link>
           ))}
-          <Link
-            href="mailto:contact@unx.capital"
-            className="hidden sm:inline-flex border border-border text-foreground px-4 py-2 hover:border-foreground transition-colors"
-          >
-            Contact
-          </Link>
         </nav>
       </Container>
     </header>

@@ -1,6 +1,6 @@
 import "server-only";
 import type { NextRequest } from "next/server";
-import { getLiveBalances } from "@/lib/balances";
+import { getLiveBalances, liveTotalNok } from "@/lib/balances";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
@@ -37,12 +37,7 @@ export async function GET(request: NextRequest) {
   const row = {
     captured_at: new Date(balances.fetchedAt).toISOString(),
     hour_bucket: hourBucket(balances.fetchedAt),
-    total_nok: (() => {
-      const cash = balances.cash.totalNok;
-      const bets = balances.polymarketBets.valueNok;
-      if (cash == null && bets == null) return null;
-      return (cash ?? 0) + (bets ?? 0);
-    })(),
+    total_nok: liveTotalNok(balances),
     cash_nok: n(balances.cash.totalNok),
     polymarket_bets_nok: n(balances.polymarketBets.valueNok),
     polymarket_cash_nok: n(balances.cash.polymarketCash.nok),

@@ -1,9 +1,13 @@
 "use client";
 
-import { Mono } from "@/components/ui";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { formatNOK, formatPct } from "@/lib/format";
-import type { LiveBalances, PolymarketPosition } from "@/lib/balances";
+import type {
+  ActivityEvent,
+  LiveBalances,
+  PolymarketPosition,
+} from "@/lib/balances";
 import { usePolledBalances } from "@/lib/useBalances";
 
 interface PolymarketBetsProps {
@@ -11,69 +15,226 @@ interface PolymarketBetsProps {
   pollMs?: number;
 }
 
+type Tab = "active" | "history";
+type SortMode = "recent" | "amount";
+
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: "recent", label: "Most recent" },
+  { value: "amount", label: "Highest amount" },
+];
+
 export function PolymarketBets({
   initial,
   pollMs = 10_000,
 }: PolymarketBetsProps) {
   const { data } = usePolledBalances(initial, pollMs);
+  const [tab, setTab] = useState<Tab>("active");
+  const [sort, setSort] = useState<SortMode>("recent");
 
-  const bets = data.polymarketBets;
   const usdNok = data.rates.usdNok;
-  const positions = bets.positions ?? [];
+  const positions = (data.polymarketBets.positions ?? []).filter(
+    (p) => p.status === "open",
+  );
+  const activity = data.polymarketBets.activity ?? [];
+
+  const positionRecency = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const a of activity) {
+      if (!a.slug || !a.outcome) continue;
+      const key = `${a.slug}-${a.outcome}`;
+      const existing = map.get(key) ?? 0;
+      if (a.timestamp > existing) map.set(key, a.timestamp);
+    }
+    return map;
+  }, [activity]);
+
+  const sortedPositions = useMemo(() => {
+    const sorted = [...positions];
+    if (sort === "amount") {
+      sorted.sort((a, b) => b.currentValue - a.currentValue);
+    } else {
+      sorted.sort((a, b) => {
+        const ka = `${a.slug}-${a.outcome}`;
+        const kb = `${b.slug}-${b.outcome}`;
+        const ta = positionRecency.get(ka) ?? 0;
+        const tb = positionRecency.get(kb) ?? 0;
+        return tb - ta;
+      });
+    }
+    return sorted;
+  }, [positions, sort, positionRecency]);
 
   return (
     <div className="border-y border-border">
       <div className="mx-auto max-w-7xl px-3 sm:px-6 md:px-10">
-        <div className="bg-surface flex flex-col">
-          <div className="p-6 border-b border-border flex items-end justify-between gap-4">
-            <div>
-              <Mono className="text-muted">Open bets · Polymarket</Mono>
-              <div className="mt-2 text-2xl font-medium tracking-tight">
-                {positions.length === 0
-                  ? "No open positions"
-                  : `${positions.length} market${positions.length === 1 ? "" : "s"}`}
+        <div className="bg-surface">
+          <div className="px-3 py-3 border-b border-border flex items-center gap-2">
+            <TabButton
+              active={tab === "active"}
+              onClick={() => setTab("active")}
+            >
+              Active bets
+            </TabButton>
+            <TabButton
+              active={tab === "history"}
+              onClick={() => setTab("history")}
+            >
+              History
+            </TabButton>
+            {tab === "active" && (
+              <div className="ml-auto">
+                <SortFilter sort={sort} onChange={setSort} />
               </div>
-            </div>
-            <div className="text-right">
-              <Mono className="text-muted">Current value</Mono>
-              <div className="mt-2 font-mono text-sm tabular-nums">
-                {bets.valueNok != null ? formatNOK(bets.valueNok) : "—"}
-              </div>
-            </div>
+            )}
           </div>
 
-          {positions.length === 0 ? (
-            <div className="p-10 text-center text-muted text-sm">
-              No live bets at {shortAddr(bets.address)}. Place a bet on
-              Polymarket and it will show up here.
-            </div>
+          {tab === "active" ? (
+            <ActiveBetsTable positions={sortedPositions} usdNok={usdNok} />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="border-b border-border">
-                    <Th className="text-left">Market</Th>
-                    <Th className="text-left">Outcome</Th>
-                    <Th className="text-right">Avg / Now</Th>
-                    <Th className="text-right">Size</Th>
-                    <Th className="text-right">P/L</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.map((p, i) => (
-                    <PositionRow
-                      key={`${p.slug}-${p.outcome}-${i}`}
-                      pos={p}
-                      usdNok={usdNok}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <HistoryTable events={activity} usdNok={usdNok} />
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+function SortFilter({
+  sort,
+  onChange,
+}: {
+  sort: SortMode;
+  onChange: (s: SortMode) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  const currentLabel =
+    SORT_OPTIONS.find((o) => o.value === sort)?.label ?? "Sort";
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="font-mono text-[10px] uppercase tracking-widest border border-border text-muted px-3 py-2 hover:border-muted-strong hover:text-foreground flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
+      >
+        <span>{currentLabel}</span>
+        <span
+          aria-hidden
+          className={cn(
+            "transition-transform leading-none",
+            open && "rotate-180",
+          )}
+        >
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute right-0 top-full mt-1 border border-border bg-surface-elevated min-w-[160px] z-20"
+        >
+          {SORT_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              role="option"
+              aria-selected={opt.value === sort}
+              onClick={() => {
+                onChange(opt.value);
+                setOpen(false);
+              }}
+              className={cn(
+                "block w-full text-left font-mono text-[10px] uppercase tracking-widest px-3 py-2 whitespace-nowrap cursor-pointer transition-colors",
+                opt.value === sort
+                  ? "bg-foreground text-background"
+                  : "text-muted hover:text-foreground hover:bg-surface",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActiveBetsTable({
+  positions,
+  usdNok,
+}: {
+  positions: PolymarketPosition[];
+  usdNok: number | null;
+}) {
+  if (positions.length === 0) {
+    return (
+      <div className="min-h-[200px] px-4 py-6 text-muted text-sm">
+        No active bets
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-[200px]">
+      <table className="w-full border-collapse">
+        <tbody>
+          {positions.map((p, i) => (
+            <PositionRow
+              key={`${p.slug}-${p.outcome}-${i}`}
+              pos={p}
+              usdNok={usdNok}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HistoryTable({
+  events,
+  usdNok,
+}: {
+  events: ActivityEvent[];
+  usdNok: number | null;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (events.length === 0) {
+    return <div className="px-4 py-6 text-muted text-sm">No history yet</div>;
+  }
+  const now = Date.now();
+  return (
+    <table className="w-full border-collapse">
+      <tbody>
+        {events.map((e, i) => (
+          <ActivityRow
+            key={`${e.txHash ?? "row"}-${e.timestamp}-${i}`}
+            event={e}
+            now={now}
+            usdNok={usdNok}
+          />
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -88,65 +249,140 @@ function PositionRow({
   const sizeNok = usdNok != null ? pos.currentValue * usdNok : null;
   const pnlNok = usdNok != null ? pos.cashPnl * usdNok : null;
   const outcomeYes = pos.outcome.toLowerCase() === "yes";
+  const multiplier = formatMultiplier(pos.avgPrice);
 
   return (
-    <tr className="border-b border-border last:border-b-0 hover:bg-foreground hover:text-background transition-colors">
-      <td className="px-4 py-3 max-w-md">
-        <div className="flex items-center gap-3">
-          {pos.icon && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={pos.icon}
-              alt=""
-              className="w-8 h-8 border border-border shrink-0 object-cover"
-            />
-          )}
-          <div className="min-w-0">
-            <div className="text-sm font-medium line-clamp-2 leading-tight">
+    <tr className="border-b border-border last:border-b-0">
+      <td className="px-4 md:px-6 py-3 md:py-5 max-w-md">
+        <div className="flex items-center gap-3 md:gap-4 min-w-0">
+          <SourceIcon icon={pos.icon} source={pos.source} />
+          <div className="min-w-0 flex-1">
+            <div className="text-base md:text-lg line-clamp-1 leading-tight">
               {pos.title}
             </div>
-            {pos.endDate && (
-              <div className="font-mono text-[10px] uppercase tracking-widest text-muted mt-0.5">
-                ends {formatEnd(pos.endDate)}
-                {pos.redeemable ? " · redeemable" : ""}
+            {pos.source !== "polymarket" && (
+              <div className="font-mono text-xs md:text-sm uppercase tracking-widest text-muted mt-0.5">
+                {pos.source}
+              </div>
+            )}
+            <div className="font-mono text-xs tabular-nums text-muted mt-1 sm:hidden">
+              <span className="uppercase tracking-widest">{pos.outcome}</span>
+              {multiplier && <> · {multiplier}</>}
+              {sizeNok != null && <> · {formatNOK(sizeNok)}</>}
+            </div>
+          </div>
+        </div>
+      </td>
+      <td className="px-4 md:px-6 py-3 md:py-5 hidden sm:table-cell">
+        <div className="flex items-center gap-2 md:gap-3">
+          <span
+            className={cn(
+              "font-mono text-[10px] md:text-xs uppercase tracking-widest border border-border px-2 md:px-2.5 py-0.5 md:py-1 inline-block",
+              outcomeYes
+                ? "bg-foreground text-background"
+                : "bg-background text-foreground",
+            )}
+          >
+            {pos.outcome}
+          </span>
+          {multiplier && (
+            <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted-strong tabular-nums">
+              {multiplier}
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="font-mono text-xs md:text-sm tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap hidden md:table-cell">
+        {sizeNok != null ? formatNOK(sizeNok) : "—"}
+      </td>
+      <td
+        className={cn(
+          "font-mono text-sm md:text-base tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap",
+          up ? "text-up" : "text-down",
+        )}
+      >
+        <div>{pnlNok != null ? formatNOK(pnlNok) : "—"}</div>
+        <div className="text-xs md:text-sm mt-0.5 opacity-80">
+          {formatPct(pos.percentPnl, 1)}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function ActivityRow({
+  event,
+  now,
+  usdNok,
+}: {
+  event: ActivityEvent;
+  now: number;
+  usdNok: number | null;
+}) {
+  const signed = signedValueUsd(event);
+  const positive = signed > 0;
+  const negative = signed < 0;
+  const valueNok = usdNok != null ? signed * usdNok : null;
+  const action = describeAction(event);
+
+  return (
+    <tr className="border-b border-border last:border-b-0">
+      <td className="px-4 md:px-6 py-3 md:py-5 whitespace-nowrap">
+        <div className="flex items-center gap-2 md:gap-3">
+          <span
+            className="hidden sm:flex w-6 h-6 md:w-8 md:h-8 border border-border items-center justify-center font-mono text-sm md:text-base leading-none shrink-0 text-foreground"
+            aria-hidden
+          >
+            {action.symbol}
+          </span>
+          <span className="font-mono text-xs md:text-sm uppercase tracking-widest">
+            {action.label}
+          </span>
+        </div>
+      </td>
+      <td className="px-4 md:px-6 py-3 md:py-5 max-w-md">
+        <div className="flex items-center gap-3 md:gap-4 min-w-0">
+          <SourceIcon icon={event.icon} source={event.source} />
+          <div className="min-w-0 flex-1">
+            <div className="text-base md:text-lg line-clamp-1 leading-tight">
+              {event.title ?? action.label}
+            </div>
+            {event.source !== "polymarket" && (
+              <div className="font-mono text-xs md:text-sm uppercase tracking-widest text-muted mt-0.5">
+                {event.source}
+              </div>
+            )}
+            {event.outcome && (
+              <div className="mt-1.5 md:mt-2 flex items-center gap-2 md:gap-3">
+                <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest border border-border bg-surface-elevated text-muted-strong px-2 md:px-2.5 py-0.5 md:py-1 inline-block">
+                  {event.outcome}
+                  {event.price != null ? ` ${Math.round(event.price * 100)}¢` : ""}
+                </span>
+                {event.shares != null && (
+                  <span className="font-mono text-xs md:text-sm tabular-nums text-muted">
+                    {formatShares(event.shares)} shares
+                  </span>
+                )}
               </div>
             )}
           </div>
         </div>
       </td>
-      <td className="px-4 py-3">
-        <span
-          className={cn(
-            "font-mono text-[10px] uppercase tracking-widest border border-border px-2 py-0.5 inline-block",
-            outcomeYes
-              ? "bg-foreground text-background"
-              : "bg-background text-foreground",
-          )}
-        >
-          {pos.outcome}
-        </span>
-      </td>
-      <td className="font-mono text-xs tabular-nums text-right px-4 py-3 whitespace-nowrap">
-        {pos.avgPrice.toFixed(2)} → {pos.curPrice.toFixed(2)}
-      </td>
-      <td className="font-mono text-xs tabular-nums text-right px-4 py-3 whitespace-nowrap">
-        <div>{sizeNok != null ? formatNOK(sizeNok) : "—"}</div>
-        <div className="text-muted text-[10px] mt-0.5">
-          ${pos.currentValue.toFixed(2)}
-        </div>
-      </td>
       <td
         className={cn(
-          "font-mono text-xs tabular-nums text-right px-4 py-3 whitespace-nowrap",
-          up ? "text-up" : "text-down",
+          "font-mono text-sm md:text-base tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap",
+          positive ? "text-up" : negative ? "text-down" : "",
         )}
       >
-        <div>
-          {up ? "▲" : "▼"} {pnlNok != null ? formatNOK(Math.abs(pnlNok)) : "—"}
-        </div>
-        <div className="text-[10px] mt-0.5 opacity-80">
-          {formatPct(pos.percentPnl, 1)}
-        </div>
+        <div>{formatSignedUsd(signed)}</div>
+        {valueNok != null && (
+          <div className="text-xs md:text-sm mt-0.5 opacity-80">
+            {formatNOK(valueNok)}
+          </div>
+        )}
+      </td>
+      <td className="font-mono text-xs md:text-sm tabular-nums text-right text-muted px-4 md:px-6 py-3 md:py-5 whitespace-nowrap hidden sm:table-cell">
+        {relativeTime(event.timestamp, now)}
       </td>
     </tr>
   );
@@ -162,7 +398,7 @@ function Th({
   return (
     <th
       className={cn(
-        "font-mono text-[10px] uppercase tracking-widest text-muted px-4 py-3",
+        "font-mono text-[10px] uppercase tracking-widest text-muted px-4 py-2",
         className,
       )}
     >
@@ -171,17 +407,125 @@ function Th({
   );
 }
 
-function shortAddr(a: string) {
-  if (a.length <= 12) return a;
-  return `${a.slice(0, 6)}…${a.slice(-4)}`;
+function SourceIcon({
+  icon,
+  source,
+}: {
+  icon: string | null;
+  source: string;
+}) {
+  if (icon) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={icon}
+        alt=""
+        className="w-7 h-7 md:w-10 md:h-10 border border-border shrink-0 object-cover"
+      />
+    );
+  }
+  const initial = source.trim().charAt(0).toUpperCase() || "?";
+  return (
+    <span
+      aria-hidden
+      className="w-7 h-7 md:w-10 md:h-10 border border-border bg-surface-elevated shrink-0 flex items-center justify-center font-mono text-xs md:text-sm font-medium"
+    >
+      {initial}
+    </span>
+  );
 }
 
-function formatEnd(iso: string) {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  return new Date(t).toLocaleDateString("nb-NO", {
-    day: "numeric",
-    month: "short",
-    year: "2-digit",
-  });
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "font-mono text-xs uppercase tracking-widest border px-4 py-2 transition-colors cursor-pointer",
+        active
+          ? "bg-foreground text-background border-foreground"
+          : "bg-transparent text-muted border-border hover:text-foreground hover:border-muted-strong",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function describeAction(event: ActivityEvent): { symbol: string; label: string } {
+  if (event.type === "TRADE") {
+    return event.side === "SELL"
+      ? { symbol: "−", label: "Sell" }
+      : { symbol: "+", label: "Buy" };
+  }
+  if (event.type === "DEPOSIT") return { symbol: "↓", label: "Deposit" };
+  if (event.type === "WITHDRAWAL") return { symbol: "↑", label: "Withdraw" };
+  if (event.type === "REDEEM") return { symbol: "↓", label: "Redeem" };
+  if (event.type === "MERGE") return { symbol: "⊕", label: "Merge" };
+  if (event.type === "SPLIT") return { symbol: "⊖", label: "Split" };
+  if (event.type === "CONVERSION") return { symbol: "↔", label: "Convert" };
+  if (event.type === "REWARD") return { symbol: "★", label: "Reward" };
+  return { symbol: "·", label: "Other" };
+}
+
+function signedValueUsd(event: ActivityEvent): number {
+  const amount = Math.abs(event.usdcSize);
+  switch (event.type) {
+    case "TRADE":
+      return event.side === "BUY" ? -amount : amount;
+    case "DEPOSIT":
+    case "REDEEM":
+    case "REWARD":
+      return amount;
+    case "WITHDRAWAL":
+      return -amount;
+    default:
+      return 0;
+  }
+}
+
+function formatSignedUsd(n: number): string {
+  if (n === 0) return "$0,00";
+  const sign = n > 0 ? "+" : "−";
+  return `${sign}$${Math.abs(n).toFixed(2)}`;
+}
+
+function formatShares(n: number): string {
+  if (n >= 1000) return n.toFixed(0);
+  return n.toFixed(n < 10 ? 2 : 1);
+}
+
+function formatMultiplier(price: number | null | undefined): string | null {
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  const mult = 1 / price;
+  const rounded = Math.round(mult * 100) / 100;
+  return `${rounded}x`;
+}
+
+function relativeTime(ms: number, now: number): string {
+  if (!ms) return "—";
+  const diff = Math.max(0, now - ms);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  const w = Math.floor(d / 7);
+  if (w < 5) return `${w}w ago`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo}mo ago`;
+  const y = Math.floor(d / 365);
+  return `${y}y ago`;
 }

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/Nav";
@@ -12,6 +12,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "UNX",
   description: "Private equity / Machine learning",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#040406",
 };
 
 export default function RootLayout({

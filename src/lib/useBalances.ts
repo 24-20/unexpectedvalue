@@ -36,7 +36,10 @@ function mergeBalances(prev: LiveBalances, next: LiveBalances): LiveBalances {
   const totalNok =
     cashParts.length > 0 ? cashParts.reduce((s, v) => s + v, 0) : null;
 
-  const positions = next.polymarketBets.positions ?? prev.polymarketBets.positions;
+  const positions =
+    next.polymarketBets.positions ?? prev.polymarketBets.positions;
+  const activity =
+    next.polymarketBets.activity ?? prev.polymarketBets.activity;
   const betsValueUsd = pick(
     next.polymarketBets.valueUsd,
     prev.polymarketBets.valueUsd,
@@ -55,6 +58,7 @@ function mergeBalances(prev: LiveBalances, next: LiveBalances): LiveBalances {
       valueUsd: betsValueUsd,
       valueNok: betsValueNok,
       positions,
+      activity,
     },
     rates: {
       solUsd: pick(next.rates.solUsd, prev.rates.solUsd),
