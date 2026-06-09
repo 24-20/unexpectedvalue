@@ -209,14 +209,22 @@ export function AdminDashboard({ investors }: Props) {
         {investors.length > 0 && (
           <div className="mt-14 border-t border-border pt-6">
             <Mono className="text-muted">[ Current ownership ]</Mono>
-            <ul className="mt-4 divide-y divide-border border-t border-b border-border">
+            <div className="mt-4 grid grid-cols-[1fr_auto_auto] gap-x-6 items-baseline font-mono text-[10px] uppercase tracking-widest text-muted border-t border-border pb-2 pt-3">
+              <span>Investor</span>
+              <span className="text-right">Invested</span>
+              <span className="text-right">Share</span>
+            </div>
+            <ul className="grid grid-cols-[1fr_auto_auto] gap-x-6 divide-y divide-border border-t border-b border-border">
               {investors.map((i) => (
                 <li
                   key={i.id}
-                  className="flex items-baseline justify-between py-3"
+                  className="col-span-3 grid grid-cols-subgrid items-baseline py-3"
                 >
                   <span className="truncate">{i.name}</span>
-                  <span className="font-mono tabular-nums text-sm">
+                  <span className="font-mono text-xs tabular-nums text-muted text-right">
+                    {formatNOK(i.totalInvestedNok)}
+                  </span>
+                  <span className="font-mono tabular-nums text-sm text-right">
                     {i.percentage.toFixed(2)}
                     <span className="text-muted">%</span>
                   </span>
