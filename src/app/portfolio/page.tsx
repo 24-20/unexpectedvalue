@@ -66,16 +66,27 @@ function ChartSkeleton() {
       <div className="mx-auto max-w-7xl px-3 sm:px-6 md:px-10">
         <div className="bg-surface">
           <div className="p-6 border-b border-border">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
                 <Mono className="text-muted">Equity</Mono>
                 <div className="mt-2 text-4xl md:text-5xl font-medium tabular-nums tracking-tight">
                   <Bar className="h-10 md:h-12 w-56 max-w-full" />
                 </div>
-                <div className="mt-2 flex flex-wrap items-baseline gap-3 font-mono text-sm tabular-nums">
+                <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
                   <span className="text-muted">Today</span>
-                  <Bar className="h-3.5 w-14" />
-                  <Bar className="h-3.5 w-20" />
+                  <div className="flex items-baseline gap-3">
+                    <Bar className="h-3.5 w-14" />
+                    <Bar className="h-3.5 w-20" />
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <div
+                  aria-hidden
+                  className="font-mono text-[10px] uppercase tracking-widest rounded-lg bg-foreground/[0.05] text-muted px-3 py-2 flex items-center gap-2 whitespace-nowrap"
+                >
+                  <span>Total equity</span>
+                  <span className="leading-none">▾</span>
                 </div>
               </div>
             </div>
