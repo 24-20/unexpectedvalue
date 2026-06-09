@@ -7,7 +7,7 @@ import {
 } from "@/components/blocks";
 import { RANGES, getPortfolioSeries } from "@/lib/portfolio";
 import { getLiveBalances, livePnlNok, liveTotalNok } from "@/lib/balances";
-import { OWNERS } from "@/lib/owners";
+import { getInvestors } from "@/lib/investors";
 
 export default function PortfolioPage() {
   return (
@@ -18,7 +18,10 @@ export default function PortfolioPage() {
 }
 
 async function PortfolioBody() {
-  const balances = await getLiveBalances();
+  const [balances, investors] = await Promise.all([
+    getLiveBalances(),
+    getInvestors(),
+  ]);
   const series = await getPortfolioSeries({
     equityNok: liveTotalNok(balances),
     pnlNok: livePnlNok(balances),
@@ -29,7 +32,7 @@ async function PortfolioBody() {
       <PortfolioChart
         series={series}
         ranges={RANGES}
-        owners={OWNERS}
+        owners={investors}
         defaultRange="1D"
       />
 
