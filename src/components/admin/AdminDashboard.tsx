@@ -50,7 +50,9 @@ export function AdminDashboard({ investors }: Props) {
       setSearch(INITIAL_SEARCH);
       return;
     }
-    setSearch((s) => ({ ...s, searching: true }));
+    // Reset any prior match — otherwise the previous "Found: X" stays
+    // visible against the now-different name until the debounce fires.
+    setSearch({ searching: true, searched: false, match: null });
     const ctrl = new AbortController();
     const id = setTimeout(async () => {
       try {
@@ -152,7 +154,25 @@ export function AdminDashboard({ investors }: Props) {
           deposit is recorded against the live equity snapshotted at confirm.
         </p>
 
-        <div className="mt-10 space-y-6">
+        <div className="mt-6 max-w-lg border border-border bg-foreground/[0.03] px-4 py-3">
+          <Mono className="text-muted">[ Order matters ]</Mono>
+          <ol className="mt-2 space-y-1 font-mono text-xs">
+            <li>
+              <span className="text-muted tabular-nums mr-2">1.</span>
+              Confirm the investment here.
+            </li>
+            <li>
+              <span className="text-muted tabular-nums mr-2">2.</span>
+              Then deposit the same amount to the wallet.
+            </li>
+          </ol>
+          <p className="mt-2.5 text-[11px] text-muted leading-relaxed">
+            Depositing first will double-count the money and skew everyone&apos;s
+            percentages.
+          </p>
+        </div>
+
+        <div className="mt-8 space-y-6">
           <Field label="Investor name">
             <Input
               value={name}

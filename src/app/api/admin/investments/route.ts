@@ -76,6 +76,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, equityBeforeNok: equity, ...result });
   } catch (e) {
     const message = e instanceof Error ? e.message : "unknown error";
+    if (message.includes("investors_slug_uniq")) {
+      return NextResponse.json(
+        { error: "An investor with that name already exists." },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
