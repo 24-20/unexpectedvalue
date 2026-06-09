@@ -5,8 +5,9 @@ import {
   PolymarketBets,
   PortfolioChart,
 } from "@/components/blocks";
-import { METRICS, RANGES, getPortfolioSeries } from "@/lib/portfolio";
+import { RANGES, getPortfolioSeries } from "@/lib/portfolio";
 import { getLiveBalances, livePnlNok, liveTotalNok } from "@/lib/balances";
+import { OWNERS } from "@/lib/owners";
 
 export default function PortfolioPage() {
   return (
@@ -28,9 +29,8 @@ async function PortfolioBody() {
       <PortfolioChart
         series={series}
         ranges={RANGES}
-        metrics={METRICS}
+        owners={OWNERS}
         defaultRange="1D"
-        defaultMetric="equity"
       />
 
       <div className="pt-4 sm:pt-6 md:pt-8 pb-4 sm:pb-6 md:pb-8 relative z-[70] bg-background">
@@ -130,7 +130,7 @@ function HoldingsSkeleton() {
               aria-hidden
               className="inline-block w-2.5 h-2.5 bg-border shrink-0"
             />
-            <span className="text-muted">Cash in wallets</span>
+            <span className="text-muted">Cash</span>
             <Bar className="h-3 w-16" />
           </div>
           <div className="flex items-center gap-3">
@@ -138,7 +138,7 @@ function HoldingsSkeleton() {
               aria-hidden
               className="inline-block w-2.5 h-2.5 bg-border shrink-0"
             />
-            <span className="text-muted">Open bets</span>
+            <span className="text-muted">Bets</span>
             <Bar className="h-3 w-14" />
           </div>
         </div>
@@ -173,8 +173,6 @@ function BetsSkeleton() {
             <table className="w-full border-collapse">
               <tbody>
                 <BetRowSkeleton />
-                <BetRowSkeleton />
-                <BetRowSkeleton />
               </tbody>
             </table>
           </div>
@@ -187,25 +185,19 @@ function BetsSkeleton() {
 function BetRowSkeleton() {
   return (
     <tr className="border-b border-border last:border-b-0">
-      <td className="px-4 py-2.5 max-w-md">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-7 h-7 shrink-0 border border-border bg-transparent" />
-          <div className="flex-1 min-w-0 space-y-1.5">
-            <Bar className="h-3.5 w-48 max-w-full" />
-            <Bar className="h-2 w-20 sm:hidden" />
+      <td className="px-4 md:px-6 py-4 md:py-6">
+        <div className="flex items-start gap-3 md:gap-4">
+          <div className="w-7 h-7 md:w-10 md:h-10 shrink-0 border border-border bg-transparent" />
+          <div className="flex-1 min-w-0 flex flex-col gap-2 md:gap-2.5">
+            <Bar className="h-4 md:h-5 w-72 max-w-full" />
+            <Bar className="h-3.5 md:h-4 w-32 max-w-full" />
+            <div className="flex items-center gap-3">
+              <div className="h-5 md:h-6 w-12 border border-border bg-transparent" />
+              <Bar className="h-2.5 md:h-3 w-20" />
+            </div>
+            <Bar className="h-2 md:h-2.5 w-24" />
+            <Bar className="h-3 md:h-3.5 w-28" />
           </div>
-        </div>
-      </td>
-      <td className="px-4 py-2.5 hidden sm:table-cell">
-        <div className="h-5 w-14 border border-border bg-transparent" />
-      </td>
-      <td className="px-4 py-2.5 hidden md:table-cell text-right">
-        <Bar className="h-3 w-14 ml-auto" />
-      </td>
-      <td className="px-4 py-2.5 text-right whitespace-nowrap">
-        <div className="inline-block space-y-1">
-          <Bar className="h-3 w-14 ml-auto" />
-          <Bar className="h-2 w-10 ml-auto" />
         </div>
       </td>
     </tr>

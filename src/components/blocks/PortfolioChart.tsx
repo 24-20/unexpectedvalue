@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import {
   AreaSeries,
   CrosshairMode,
@@ -18,15 +24,22 @@ import {
   formatNOKDelta,
   formatPct,
 } from "@/lib/format";
-import type { Metric, Range, SeriesByMetric } from "@/lib/portfolio";
+import type { Range, SeriesByMetric } from "@/lib/portfolio";
+import type { Owner } from "@/lib/owners";
 import { Mono } from "@/components/ui";
+
+type ViewMode = "total" | "relative";
+
+const VIEW_MODES: { key: ViewMode; label: string }[] = [
+  { key: "total", label: "Total equity" },
+  { key: "relative", label: "Relative equity" },
+];
 
 interface PortfolioChartProps {
   series: SeriesByMetric;
   ranges: { key: Range; label: string }[];
-  metrics: { key: Metric; label: string }[];
+  owners: ReadonlyArray<Owner>;
   defaultRange?: Range;
-  defaultMetric?: Metric;
 }
 
 interface HoverState {
@@ -91,12 +104,12 @@ function readThemeColors(): ThemeColors {
 export function PortfolioChart({
   series,
   ranges,
-  metrics,
+  owners,
   defaultRange = "1M",
-  defaultMetric = "equity",
 }: PortfolioChartProps) {
   const [range, setRange] = useState<Range>(defaultRange);
-  const [metric, setMetric] = useState<Metric>(defaultMetric);
+  const [viewMode, setViewMode] = useState<ViewMode>("total");
+  const [ownerIdx, setOwnerIdx] = useState(0);
   const [hover, setHover] = useState<HoverState | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -108,25 +121,43 @@ export function PortfolioChart({
     rangeRef.current = range;
   }, [range]);
 
-  const activeSet = series[metric];
-  const active = activeSet[range];
+  const active = series.equity[range];
+  const activePnl = series.pnl[range];
   const base = active.startValue;
+  // Current equity (= end of "1D" series, which is "now" for every range) is
+  // our denominator when expressing PnL deltas as a percent. Far more stable
+  // than the range's starting value — that goes to zero pre-deposit and makes
+  // every percent blow up to infinity.
+  const currentEquity = series.equity["1D"].endValue;
+  // In Relative mode we scale every displayed NOK value by the selected
+  // owner's share. The percent stays the same since both numerator and
+  // denominator scale by the same factor.
+  const selectedOwner =
+    viewMode === "relative" ? owners[ownerIdx] ?? owners[0] : null;
+  const ownerScale = selectedOwner ? selectedOwner.percentage / 100 : 1;
 
   const chartData = useMemo(() => {
-    // Plot absolute NOK values so the line keeps its shape even when the
-    // base (startValue) is 0 — e.g. when the visible range starts before
-    // the user ever had a balance.
     return active.points.map((p) => ({
       time: Math.floor(p.t / 1000) as UTCTimestamp,
-      value: p.v,
+      value: p.v * ownerScale,
     }));
-  }, [active]);
+  }, [active, ownerScale]);
 
   const absLookup = useMemo(() => {
     const m = new Map<number, number>();
-    for (const p of active.points) m.set(Math.floor(p.t / 1000), p.v);
+    for (const p of active.points)
+      m.set(Math.floor(p.t / 1000), p.v * ownerScale);
     return m;
-  }, [active]);
+  }, [active, ownerScale]);
+
+  // PnL value at each time bucket — used to drive the headline delta/percent.
+  // Kept unscaled here; scaling is applied at display time alongside the NOK
+  // value, so the percent (a ratio) stays unaffected.
+  const pnlLookup = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const p of activePnl.points) m.set(Math.floor(p.t / 1000), p.v);
+    return m;
+  }, [activePnl]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -315,46 +346,64 @@ export function PortfolioChart({
 
   const display = hover ?? {
     t: active.points[active.points.length - 1]?.t ?? 0,
-    value: active.endValue,
+    value: active.endValue * ownerScale,
     pct: active.changePct,
     delta: active.changeAbs,
   };
   const rangeLabel = ranges.find((r) => r.key === range)?.label ?? "";
-  const metricLabel = metrics.find((m) => m.key === metric)?.label ?? "";
-  const isUp = display.delta >= 0;
+  const headerLabel = selectedOwner
+    ? `${selectedOwner.name}'s equity`
+    : "Equity";
+  // PnL deltas drive the headline kr + percent. Scale the NOK amount by the
+  // selected owner's share, but the percent is a ratio so it cancels out.
+  const pnlDeltaUnscaled = hover
+    ? (pnlLookup.get(Math.floor(hover.t / 1000)) ?? activePnl.endValue) -
+      activePnl.startValue
+    : activePnl.changeAbs;
+  const pnlDelta = pnlDeltaUnscaled * ownerScale;
+  const pnlPct =
+    currentEquity > 0 ? (pnlDeltaUnscaled / currentEquity) * 100 : 0;
+  const isUp = pnlDelta >= 0;
   const deltaTone = isUp ? "text-up" : "text-down";
-  // Equity is always positive — show the raw amount. PnL is signed by nature,
-  // so prefix +/− to make the direction obvious at a glance.
-  const formatValue = metric === "pnl" ? formatNOKDelta : formatNOK;
 
   return (
     <div className="border-b border-border">
       <div className="mx-auto max-w-7xl px-3 sm:px-6 md:px-10">
         <div className="bg-surface">
           <div className="p-6 border-b border-border">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <Mono className="text-muted">{metricLabel}</Mono>
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <Mono className="text-muted">{headerLabel}</Mono>
                 <div className="mt-2 text-4xl md:text-5xl font-medium tabular-nums tracking-tight">
-                  {formatValue(display.value)}
+                  {formatNOK(display.value)}
                 </div>
                 <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
                   <span className="text-muted">
                     {hover ? formatDateTime(display.t) : rangeLabel}
                   </span>
                   <div className="flex items-baseline gap-3">
-                    <span className={deltaTone}>{formatPct(display.pct)}</span>
                     <span className={deltaTone}>
-                      {formatNOKDelta(display.delta)}
+                      {formatNOKDelta(pnlDelta)}
                     </span>
+                    <span className={deltaTone}>{formatPct(pnlPct)}</span>
                   </div>
                 </div>
               </div>
-              <MetricDropdown
-                metric={metric}
-                metrics={metrics}
-                onChange={setMetric}
-              />
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <ViewModeDropdown
+                  viewMode={viewMode}
+                  onChange={setViewMode}
+                />
+                {viewMode === "relative" && (
+                  <div className="animate-[dropdown-pop-in_180ms_ease-out] origin-top-right">
+                    <OwnerDropdown
+                      owners={owners}
+                      selectedIdx={ownerIdx}
+                      onChange={setOwnerIdx}
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -366,8 +415,13 @@ export function PortfolioChart({
           <div className="p-3 md:p-4 flex flex-wrap gap-2">
             {ranges.map((r) => {
               const isActive = r.key === range;
-              const s = activeSet[r.key];
-              const up = s.changePct >= 0;
+              // The per-range label is always the relative PnL return for
+              // that range, regardless of which line is on screen — same
+              // semantics as the headline percent.
+              const pnlForRange = series.pnl[r.key].changeAbs;
+              const pct =
+                currentEquity > 0 ? (pnlForRange / currentEquity) * 100 : 0;
+              const up = pnlForRange >= 0;
               return (
                 <button
                   key={r.key}
@@ -389,7 +443,7 @@ export function PortfolioChart({
                       up ? "text-up" : "text-down",
                     )}
                   >
-                    {formatPct(s.changePct)}
+                    {formatPct(pct)}
                   </span>
                 </button>
               );
@@ -401,29 +455,32 @@ export function PortfolioChart({
   );
 }
 
-function MetricDropdown({
-  metric,
-  metrics,
+function useOutsideClick(
+  ref: RefObject<HTMLDivElement | null>,
+  active: boolean,
+  onOutside: () => void,
+) {
+  useEffect(() => {
+    if (!active) return;
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onOutside();
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [ref, active, onOutside]);
+}
+
+function ViewModeDropdown({
+  viewMode,
   onChange,
 }: {
-  metric: Metric;
-  metrics: { key: Metric; label: string }[];
-  onChange: (m: Metric) => void;
+  viewMode: ViewMode;
+  onChange: (m: ViewMode) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const current = metrics.find((m) => m.key === metric)?.label ?? "";
-
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [open]);
+  useOutsideClick(ref, open, () => setOpen(false));
+  const current = VIEW_MODES.find((m) => m.key === viewMode)?.label ?? "";
 
   return (
     <div ref={ref} className="relative">
@@ -448,10 +505,10 @@ function MetricDropdown({
       {open && (
         <div
           role="listbox"
-          className="absolute right-0 top-full mt-1 rounded-lg bg-surface-elevated min-w-[140px] z-20 overflow-hidden p-1"
+          className="absolute right-0 top-full mt-1 rounded-lg bg-surface-elevated min-w-[160px] z-20 overflow-hidden p-1"
         >
-          {metrics.map((m) => {
-            const selected = m.key === metric;
+          {VIEW_MODES.map((m) => {
+            const selected = m.key === viewMode;
             return (
               <button
                 key={m.key}
@@ -478,6 +535,80 @@ function MetricDropdown({
                   )}
                 >
                   ✓
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OwnerDropdown({
+  owners,
+  selectedIdx,
+  onChange,
+}: {
+  owners: ReadonlyArray<Owner>;
+  selectedIdx: number;
+  onChange: (idx: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutsideClick(ref, open, () => setOpen(false));
+  const current = owners[selectedIdx] ?? owners[0];
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="font-mono text-[10px] uppercase tracking-widest rounded-lg bg-foreground/10 text-foreground ring-1 ring-foreground/25 px-3 py-2 hover:bg-foreground/15 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
+      >
+        <span aria-hidden className="text-muted leading-none">
+          ↳
+        </span>
+        <span>{current?.name ?? ""}</span>
+        <span
+          aria-hidden
+          className={cn(
+            "transition-transform leading-none",
+            open && "rotate-180",
+          )}
+        >
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute right-0 top-full mt-1 rounded-lg bg-surface-elevated min-w-[220px] z-20 overflow-hidden p-1"
+        >
+          {owners.map((o, idx) => {
+            const selected = idx === selectedIdx;
+            return (
+              <button
+                key={o.name}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(idx);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex items-center justify-between gap-4 w-full text-left font-mono text-[10px] uppercase tracking-widest rounded-lg px-3 py-2 whitespace-nowrap cursor-pointer transition-colors",
+                  selected
+                    ? "text-foreground"
+                    : "text-muted hover:bg-foreground/10 hover:text-foreground",
+                )}
+              >
+                <span>{o.name}</span>
+                <span className="tabular-nums">
+                  {o.percentage.toFixed(2)}%
                 </span>
               </button>
             );

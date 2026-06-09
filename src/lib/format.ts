@@ -1,12 +1,12 @@
 const NOK = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 export function formatNOK(n: number) {
-  return `${NOK.format(Math.round(n))} NOK`;
+  return `${NOK.format(Math.round(n))} kr`;
 }
 
 export function formatNOKDelta(n: number) {
   const sign = n > 0 ? "+" : n < 0 ? "−" : "";
-  return `${sign}${NOK.format(Math.round(Math.abs(n)))} NOK`;
+  return `${sign}${NOK.format(Math.round(Math.abs(n)))} kr`;
 }
 
 export function formatPct(n: number, digits = 2) {

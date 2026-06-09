@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
-import { formatNOK, formatPct } from "@/lib/format";
+import { formatNOK, formatNOKDelta, formatPct } from "@/lib/format";
 import type {
   ActivityEvent,
   LiveBalances,
@@ -43,6 +43,8 @@ export function PolymarketBets({
   const [historySort, setHistorySort] = useState<HistorySortMode>("recent");
 
   const usdNok = data.rates.usdNok;
+  const portfolioTotalNok =
+    (data.cash.totalNok ?? 0) + (data.polymarketBets.valueNok ?? 0);
   const positions = (data.polymarketBets.positions ?? []).filter(
     (p) => p.status === "open",
   );
@@ -124,7 +126,11 @@ export function PolymarketBets({
           </div>
 
           {tab === "active" ? (
-            <ActiveBetsTable positions={sortedPositions} usdNok={usdNok} />
+            <ActiveBetsTable
+              positions={sortedPositions}
+              usdNok={usdNok}
+              portfolioTotalNok={portfolioTotalNok}
+            />
           ) : (
             <HistoryTable events={sortedActivity} usdNok={usdNok} />
           )}
@@ -223,9 +229,11 @@ function SortFilter<V extends string>({
 function ActiveBetsTable({
   positions,
   usdNok,
+  portfolioTotalNok,
 }: {
   positions: PolymarketPosition[];
   usdNok: number | null;
+  portfolioTotalNok: number;
 }) {
   if (positions.length === 0) {
     return (
@@ -243,6 +251,7 @@ function ActiveBetsTable({
               key={`${p.slug}-${p.outcome}-${i}`}
               pos={p}
               usdNok={usdNok}
+              portfolioTotalNok={portfolioTotalNok}
             />
           ))}
         </tbody>
@@ -287,9 +296,11 @@ function HistoryTable({
 function PositionRow({
   pos,
   usdNok,
+  portfolioTotalNok,
 }: {
   pos: PolymarketPosition;
   usdNok: number | null;
+  portfolioTotalNok: number;
 }) {
   const router = useRouter();
   const up = pos.cashPnl >= 0;
@@ -297,6 +308,8 @@ function PositionRow({
   const pnlNok = usdNok != null ? pos.cashPnl * usdNok : null;
   const outcomeYes = pos.outcome.toLowerCase() === "yes";
   const multiplier = formatMultiplier(pos.avgPrice);
+  const portfolioShare =
+    sizeNok != null ? formatPortfolioShare(sizeNok, portfolioTotalNok) : null;
   const href = betHref(pos.slug, pos.outcome);
 
   return (
@@ -305,61 +318,71 @@ function PositionRow({
       onClick={() => router.push(href)}
       onMouseEnter={() => router.prefetch(href)}
     >
-      <td className="px-4 md:px-6 py-3 md:py-5 max-w-md">
-        <div className="flex items-center gap-3 md:gap-4 min-w-0">
+      <td className="px-4 md:px-6 py-4 md:py-6">
+        <div className="flex items-start gap-3 md:gap-4 min-w-0">
           <SourceIcon icon={pos.icon} source={pos.source} />
-          <div className="min-w-0 flex-1">
+          <div className="flex-1 min-w-0 flex flex-col gap-2 md:gap-2.5">
             <Link
               href={href}
               onClick={(e) => e.stopPropagation()}
-              className="text-base md:text-lg line-clamp-1 leading-tight"
+              className="text-base md:text-lg leading-snug font-medium"
             >
               {pos.title}
             </Link>
-            {pos.source !== "polymarket" && (
-              <div className="font-mono text-xs md:text-sm uppercase tracking-widest text-muted mt-0.5">
-                {pos.source}
+
+            <div
+              className={cn(
+                "font-mono tabular-nums text-sm md:text-base",
+                up ? "text-up" : "text-down",
+              )}
+            >
+              {pnlNok != null ? formatNOKDelta(pnlNok) : "—"}
+              <span className="ml-2 text-xs md:text-sm opacity-80">
+                {formatPct(pos.percentPnl, 1)}
+              </span>
+              <span className="ml-2 font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted">
+                PnL
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span
+                className={cn(
+                  "font-mono text-[10px] md:text-xs uppercase tracking-widest border border-border px-2 md:px-2.5 py-0.5 md:py-1 inline-block",
+                  outcomeYes
+                    ? "bg-foreground text-background"
+                    : "bg-background text-foreground",
+                )}
+              >
+                {pos.outcome}
+              </span>
+              {multiplier && (
+                <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted-strong tabular-nums">
+                  <span className="text-muted">Odds</span> {multiplier}
+                </span>
+              )}
+              {pos.source !== "polymarket" && (
+                <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted">
+                  {pos.source}
+                </span>
+              )}
+            </div>
+
+            {portfolioShare && (
+              <div className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted tabular-nums">
+                {portfolioShare} of portfolio
               </div>
             )}
-            <div className="font-mono text-xs tabular-nums text-muted mt-1 sm:hidden">
-              <span className="uppercase tracking-widest">{pos.outcome}</span>
-              {multiplier && <> · {multiplier}</>}
-              {sizeNok != null && <> · {formatNOK(sizeNok)}</>}
-            </div>
-          </div>
-        </div>
-      </td>
-      <td className="px-4 md:px-6 py-3 md:py-5 hidden sm:table-cell">
-        <div className="flex items-center gap-2 md:gap-3">
-          <span
-            className={cn(
-              "font-mono text-[10px] md:text-xs uppercase tracking-widest border border-border px-2 md:px-2.5 py-0.5 md:py-1 inline-block",
-              outcomeYes
-                ? "bg-foreground text-background"
-                : "bg-background text-foreground",
+
+            {sizeNok != null && (
+              <div className="font-mono text-xs md:text-sm tabular-nums text-muted-strong">
+                <span className="text-muted uppercase tracking-widest text-[10px] md:text-xs">
+                  Amount
+                </span>{" "}
+                {formatNOK(sizeNok)}
+              </div>
             )}
-          >
-            {pos.outcome}
-          </span>
-          {multiplier && (
-            <span className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted-strong tabular-nums">
-              {multiplier}
-            </span>
-          )}
-        </div>
-      </td>
-      <td className="font-mono text-xs md:text-sm tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap hidden md:table-cell">
-        {sizeNok != null ? formatNOK(sizeNok) : "—"}
-      </td>
-      <td
-        className={cn(
-          "font-mono text-sm md:text-base tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap",
-          up ? "text-up" : "text-down",
-        )}
-      >
-        <div>{pnlNok != null ? formatNOK(pnlNok) : "—"}</div>
-        <div className="text-xs md:text-sm mt-0.5 opacity-80">
-          {formatPct(pos.percentPnl, 1)}
+          </div>
         </div>
       </td>
     </tr>
@@ -585,6 +608,17 @@ function formatMultiplier(price: number | null | undefined): string | null {
   const mult = 1 / price;
   const rounded = Math.round(mult * 100) / 100;
   return `${rounded}x`;
+}
+
+function formatPortfolioShare(
+  amount: number,
+  total: number,
+): string | null {
+  if (!Number.isFinite(total) || total <= 0) return null;
+  const pct = (amount / total) * 100;
+  if (pct < 0.05) return "<0.1%";
+  if (pct < 10) return `${pct.toFixed(1)}%`;
+  return `${Math.round(pct)}%`;
 }
 
 function relativeTime(ms: number, now: number): string {

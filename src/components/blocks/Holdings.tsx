@@ -97,7 +97,7 @@ export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
               aria-hidden
               className="inline-block w-2.5 h-2.5 bg-foreground shrink-0"
             />
-            <span className="text-muted">Cash in wallets</span>
+            <span className="text-muted">Cash</span>
             <span>{formatNOK(cash)}</span>
           </div>
           <div className="flex items-center gap-3">
@@ -105,7 +105,7 @@ export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
               aria-hidden
               className="inline-block w-2.5 h-2.5 bg-muted shrink-0"
             />
-            <span className="text-muted">Open bets</span>
+            <span className="text-muted">Bets</span>
             <span>{formatNOK(bets)}</span>
           </div>
         </div>

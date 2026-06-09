@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { Container } from "@/components/ui";
+import { AlertBell } from "@/components/AlertBell";
 
 const RIGHT_LINKS = [
   { href: "/about", label: "About" },
-  { href: "/community", label: "Community" },
+  { href: "/percentages", label: "Percentages" },
 ];
 
 export function Nav() {
@@ -26,6 +27,7 @@ export function Nav() {
               {l.label}
             </Link>
           ))}
+          <AlertBell />
         </nav>
       </Container>
     </header>
