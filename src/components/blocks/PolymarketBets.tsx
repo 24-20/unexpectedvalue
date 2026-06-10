@@ -43,8 +43,13 @@ export function PolymarketBets({
   const [historySort, setHistorySort] = useState<HistorySortMode>("recent");
 
   const usdNok = data.rates.usdNok;
+  // No ?? 0 fallbacks here: a transiently missing cash leg would shrink the
+  // denominator to bets-only and overstate every bet's portfolio share —
+  // better to hide the share until both legs are known.
   const portfolioTotalNok =
-    (data.cash.totalNok ?? 0) + (data.polymarketBets.valueNok ?? 0);
+    data.cash.totalNok != null && data.polymarketBets.valueNok != null
+      ? data.cash.totalNok + data.polymarketBets.valueNok
+      : null;
   const positions = (data.polymarketBets.positions ?? []).filter(
     (p) => p.status === "open",
   );
@@ -233,7 +238,7 @@ function ActiveBetsTable({
 }: {
   positions: PolymarketPosition[];
   usdNok: number | null;
-  portfolioTotalNok: number;
+  portfolioTotalNok: number | null;
 }) {
   if (positions.length === 0) {
     return (
@@ -300,7 +305,7 @@ function PositionRow({
 }: {
   pos: PolymarketPosition;
   usdNok: number | null;
-  portfolioTotalNok: number;
+  portfolioTotalNok: number | null;
 }) {
   const router = useRouter();
   const up = pos.cashPnl >= 0;
@@ -372,20 +377,24 @@ function PositionRow({
               )}
             </div>
 
-            <div
-              className={cn(
-                "font-mono tabular-nums text-sm md:text-base",
-                up ? "text-up" : "text-down",
-              )}
-            >
-              {pnlNok != null ? formatNOKDelta(pnlNok) : "—"}
-              <span className="ml-2 text-xs md:text-sm opacity-80">
-                {formatPct(pos.percentPnl, 1)}
-              </span>
-              <span className="ml-2 font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted">
-                PnL
-              </span>
-            </div>
+            {/* Bookie bets have no live odds, so their PnL is a meaningless
+                flat zero until settled — show it only for Polymarket. */}
+            {pos.source === "polymarket" && (
+              <div
+                className={cn(
+                  "font-mono tabular-nums text-sm md:text-base",
+                  up ? "text-up" : "text-down",
+                )}
+              >
+                {pnlNok != null ? formatNOKDelta(pnlNok) : "—"}
+                <span className="ml-2 text-xs md:text-sm opacity-80">
+                  {formatPct(pos.percentPnl, 1)}
+                </span>
+                <span className="ml-2 font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted">
+                  PnL
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </td>
@@ -590,6 +599,7 @@ function describeAction(event: ActivityEvent): { symbol: string; label: string }
   if (event.type === "SPLIT") return { symbol: "⊖", label: "Split" };
   if (event.type === "CONVERSION") return { symbol: "↔", label: "Convert" };
   if (event.type === "REWARD") return { symbol: "★", label: "Reward" };
+  if (event.type === "LOST") return { symbol: "✕", label: "Lost" };
   return { symbol: "·", label: "Other" };
 }
 
@@ -629,9 +639,9 @@ function formatMultiplier(price: number | null | undefined): string | null {
 
 function formatPortfolioShare(
   amount: number,
-  total: number,
+  total: number | null,
 ): string | null {
-  if (!Number.isFinite(total) || total <= 0) return null;
+  if (total == null || !Number.isFinite(total) || total <= 0) return null;
   const pct = (amount / total) * 100;
   if (pct < 0.05) return "<0.1%";
   if (pct < 10) return `${pct.toFixed(1)}%`;

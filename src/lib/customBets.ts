@@ -111,7 +111,7 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
           activity.push({
             source: r.bookie,
             timestamp: ts,
-            type: "OTHER",
+            type: "LOST",
             side: null,
             usdcSize: 0,
             title: r.title,
@@ -155,7 +155,9 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
         }
       }
 
-      // Pending bets become active positions, carrying the stake as currentValue
+      // Pending bets become active positions, carrying the stake as currentValue.
+      // size follows Polymarket semantics — $1-claims paid out on a win — so it
+      // must be the potential payout (stake × odds), not the stake.
       if (r.status === "pending") {
         const impliedPrice = odds > 0 ? 1 / odds : 0;
         positions.push({
@@ -164,7 +166,7 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
           slug: r.id,
           icon: r.icon_url,
           outcome: r.outcome,
-          size: stake,
+          size: odds > 0 ? stake * odds : stake,
           avgPrice: impliedPrice,
           curPrice: impliedPrice,
           initialValue: stake,
@@ -182,5 +184,57 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
     return { positions, activity, pendingStakeUsd, realizedPnlUsd };
   } catch {
     return null;
+  }
+}
+
+export interface PendingBookieBet {
+  id: string;
+  bookie: string;
+  title: string;
+  outcome: string;
+  stakeUsd: number;
+  oddsDecimal: number;
+  placedAt: string;
+  endsAt: string | null;
+}
+
+// Pending bookie bets for the admin settle panel.
+export async function fetchPendingBookieBets(): Promise<PendingBookieBet[]> {
+  let sb;
+  try {
+    sb = getSupabaseAdmin();
+  } catch {
+    return [];
+  }
+
+  try {
+    const { data, error } = await sb
+      .from("custom_bets")
+      .select("id, bookie, title, outcome, stake_usd, odds_decimal, placed_at, ends_at")
+      .eq("status", "pending")
+      .order("placed_at", { ascending: false });
+    if (error || !data) return [];
+    return (data as Pick<
+      CustomBetRow,
+      | "id"
+      | "bookie"
+      | "title"
+      | "outcome"
+      | "stake_usd"
+      | "odds_decimal"
+      | "placed_at"
+      | "ends_at"
+    >[]).map((r) => ({
+      id: r.id,
+      bookie: r.bookie,
+      title: r.title,
+      outcome: r.outcome,
+      stakeUsd: num(r.stake_usd),
+      oddsDecimal: num(r.odds_decimal),
+      placedAt: r.placed_at,
+      endsAt: r.ends_at,
+    }));
+  } catch {
+    return [];
   }
 }

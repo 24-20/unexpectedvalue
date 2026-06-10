@@ -3,6 +3,7 @@ import { ADMIN_COOKIE_NAME, verifyAdminCookie } from "@/lib/adminAuth";
 import { AdminOtpForm } from "@/components/admin/AdminOtpForm";
 import { AdminDashboard } from "@/components/admin/AdminDashboard";
 import { getInvestors } from "@/lib/investors";
+import { fetchPendingBookieBets } from "@/lib/customBets";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,9 @@ export default async function AdminPage() {
     return <AdminOtpForm />;
   }
 
-  const investors = await getInvestors();
-  return <AdminDashboard investors={investors} />;
+  const [investors, bookieBets] = await Promise.all([
+    getInvestors(),
+    fetchPendingBookieBets(),
+  ]);
+  return <AdminDashboard investors={investors} bookieBets={bookieBets} />;
 }

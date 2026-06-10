@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { Mono } from "@/components/ui";
 import {
@@ -34,6 +35,7 @@ interface BetSummary {
   sold: number;
   redeemed: number;
   endsAt: number | null;
+  timeLeftMs: number | null;
   verdict: Verdict;
 }
 
@@ -69,6 +71,10 @@ function summarizeBet(
   const endsAtStr = position?.endDate ?? market?.endDate ?? null;
   const endsAtParsed = endsAtStr ? Date.parse(endsAtStr) : NaN;
   const endsAt = Number.isFinite(endsAtParsed) ? endsAtParsed : null;
+  // Snapshot the countdown here rather than during component render — the
+  // react-hooks purity rule forbids reading the clock in render.
+  const timeLeftMs =
+    endsAt != null && !market?.closed ? endsAt - Date.now() : null;
 
   let verdict: Verdict;
   if (position?.redeemable) {
@@ -102,6 +108,7 @@ function summarizeBet(
     sold,
     redeemed,
     endsAt,
+    timeLeftMs,
     verdict,
   };
 }
@@ -158,15 +165,13 @@ function BetDetail({
   const pos = bet.position;
   const outcomeYes = bet.outcome.toLowerCase() === "yes";
   const tone = verdictTone(bet.verdict);
+  const isPolymarket = bet.source === "polymarket";
 
   const avgPrice = pos?.avgPrice ?? 0;
   const stakeUsd = pos?.initialValue ?? Math.max(0, bet.bought - bet.sold);
   const currentUsd = pos?.currentValue ?? 0;
   const potentialUsd =
     pos && avgPrice > 0 ? pos.initialValue / avgPrice : pos?.size ?? 0;
-
-  const stakeNok = usdNok != null ? stakeUsd * usdNok : null;
-  const potentialNok = usdNok != null ? potentialUsd * usdNok : null;
 
   let pnlUsd: number;
   if (pos) {
@@ -178,16 +183,97 @@ function BetDetail({
   } else {
     pnlUsd = bet.redeemed + bet.sold - bet.bought;
   }
-  const pnlNok = usdNok != null ? pnlUsd * usdNok : null;
   const pnlPct = pos
     ? pos.percentPnl
     : stakeUsd > 0
       ? (pnlUsd / stakeUsd) * 100
       : 0;
-  const pnlUp = pnlUsd >= 0;
+  const pnlTone = pnlUsd > 0 ? "up" : pnlUsd < 0 ? "down" : undefined;
 
+  const toNok = (usd: number) => (usdNok != null ? usd * usdNok : null);
+  const nok = (v: number | null) => (v != null ? formatNOK(v) : "—");
+
+  const pnlNok = toNok(pnlUsd);
   const multiplier = formatMultiplier(avgPrice);
   const winningOutcome = bet.market?.winningOutcome ?? null;
+  const settled =
+    bet.verdict === "won" ||
+    bet.verdict === "lost" ||
+    bet.verdict === "void" ||
+    bet.verdict === "redeemable";
+
+  const stakeCell: StatProps = {
+    label: "Stake",
+    primary: nok(toNok(stakeUsd)),
+    secondary: `$${stakeUsd.toFixed(2)}`,
+  };
+
+  // Exactly three headline numbers, picked per bet state — finer-grained
+  // mechanics (shares, prices) live in the details line below the band.
+  let cells: StatProps[];
+  if (settled) {
+    const returnedUsd =
+      bet.verdict === "redeemable" ? currentUsd : bet.redeemed + bet.sold;
+    cells = [
+      stakeCell,
+      {
+        label: bet.verdict === "redeemable" ? "Payout" : "Returned",
+        primary: nok(toNok(returnedUsd)),
+        secondary:
+          bet.verdict === "redeemable"
+            ? "claimable now"
+            : `$${returnedUsd.toFixed(2)}`,
+      },
+      {
+        label: "PnL",
+        primary: pnlNok != null ? formatNOKDelta(pnlNok) : "—",
+        secondary: formatPct(pnlPct, 1),
+        tone: pnlTone,
+      },
+    ];
+  } else if (!isPolymarket) {
+    // Bookie bet with no live odds — what it cost, the struck odds, payout.
+    cells = [
+      stakeCell,
+      {
+        label: "Odds",
+        primary: multiplier ?? "—",
+        secondary:
+          avgPrice > 0 ? `${Math.round(avgPrice * 100)}% implied` : null,
+      },
+      {
+        label: "To win",
+        primary: potentialUsd > 0 ? nok(toNok(potentialUsd)) : "—",
+        secondary: potentialUsd > 0 ? `$${potentialUsd.toFixed(2)}` : null,
+      },
+    ];
+  } else {
+    cells = [
+      stakeCell,
+      {
+        label: "Value now",
+        primary: nok(toNok(currentUsd)),
+        secondary:
+          pnlNok != null ? (
+            <span
+              className={cn(
+                pnlTone === "up" && "text-up",
+                pnlTone === "down" && "text-down",
+              )}
+            >
+              {formatNOKDelta(pnlNok)} ({formatPct(pnlPct, 1)})
+            </span>
+          ) : null,
+      },
+      {
+        label: "To win",
+        primary: potentialUsd > 0 ? nok(toNok(potentialUsd)) : "—",
+        secondary: multiplier
+          ? `${multiplier} · ${Math.round(avgPrice * 100)}¢ entry`
+          : null,
+      },
+    ];
+  }
 
   return (
     <div>
@@ -211,15 +297,12 @@ function BetDetail({
                     >
                       {bet.outcome}
                     </span>
-                    {multiplier && (
-                      <Mono className="text-muted-strong tabular-nums">
-                        {multiplier}
-                      </Mono>
+                    {!isPolymarket && (
+                      <Mono className="text-muted">{bet.source}</Mono>
                     )}
-                    <Mono className="text-muted">{bet.source}</Mono>
                   </div>
 
-                  <h1 className="text-2xl sm:text-3xl md:text-5xl font-medium tracking-tight leading-[1.1]">
+                  <h1 className="text-2xl sm:text-3xl md:text-4xl font-medium tracking-tight leading-[1.1]">
                     {bet.title}
                   </h1>
 
@@ -232,10 +315,10 @@ function BetDetail({
                         <span className="text-muted-strong">
                           {formatDate(bet.endsAt)}
                         </span>
-                        {!bet.market?.closed && Date.now() < bet.endsAt && (
+                        {bet.timeLeftMs != null && bet.timeLeftMs > 0 && (
                           <>
                             {" · "}
-                            {formatDuration(bet.endsAt - Date.now())} left
+                            {formatDuration(bet.timeLeftMs)} left
                           </>
                         )}
                       </span>
@@ -261,71 +344,31 @@ function BetDetail({
               </div>
             </div>
 
-            <div className="border-t border-border px-5 sm:px-8 md:px-10 py-5 sm:py-6 md:py-7">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-5 sm:gap-7 md:gap-10">
-                <Stat
-                  label="Position"
-                  primary={stakeNok != null ? formatNOK(stakeNok) : "—"}
-                  secondary={`$${stakeUsd.toFixed(2)}`}
-                />
-                <Stat
-                  label="Potential payout"
-                  primary={
-                    potentialNok != null && potentialUsd > 0
-                      ? formatNOK(potentialNok)
-                      : "—"
-                  }
-                  secondary={
-                    potentialUsd > 0 ? `$${potentialUsd.toFixed(2)}` : null
-                  }
-                />
-                <Stat
-                  label="Multiplier"
-                  primary={multiplier ?? "—"}
-                  secondary={
-                    avgPrice > 0 ? `${Math.round(avgPrice * 100)}¢ entry` : null
-                  }
-                />
-                <Stat
-                  label="PnL"
-                  primary={pnlNok != null ? formatNOKDelta(pnlNok) : "—"}
-                  secondary={formatPct(pnlPct, 1)}
-                  tone={pnlUp ? "up" : "down"}
-                />
+            <div className="border-t border-border px-5 sm:px-8 md:px-10 py-6 sm:py-7 md:py-8">
+              <div className="grid grid-cols-3 gap-4 sm:gap-7 md:gap-10">
+                {cells.map((c) => (
+                  <Stat key={c.label} {...c} />
+                ))}
               </div>
 
-              {pos && (
-                <div className="mt-5 sm:mt-7 md:mt-9 grid grid-cols-2 md:grid-cols-4 gap-5 sm:gap-7 md:gap-10">
-                  <Stat
-                    label="Current value"
-                    primary={
-                      usdNok != null ? formatNOK(currentUsd * usdNok) : "—"
-                    }
-                    secondary={`$${currentUsd.toFixed(2)}`}
-                  />
-                  <Stat
-                    label="Shares"
-                    primary={formatShares(pos.size)}
-                    secondary={`avg ${Math.round(pos.avgPrice * 100)}¢`}
-                  />
-                  <Stat
-                    label="Market price"
-                    primary={`${Math.round(pos.curPrice * 100)}¢`}
-                    secondary={`${(pos.curPrice * 100).toFixed(1)}% implied`}
-                  />
-                  <Stat
-                    label={bet.endsAt != null ? "Resolves" : "Status"}
-                    primary={
-                      bet.endsAt != null
-                        ? formatDate(bet.endsAt)
-                        : VERDICT_LABEL[bet.verdict]
-                    }
-                    secondary={
-                      bet.endsAt != null
-                        ? VERDICT_LABEL[bet.verdict]
-                        : null
-                    }
-                  />
+              {isPolymarket && pos && (
+                <div className="mt-5 sm:mt-6 pt-4 border-t border-border-faint flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] md:text-xs tabular-nums text-muted">
+                  <span>{formatShares(pos.size)} shares</span>
+                  <span aria-hidden className="opacity-50">
+                    ·
+                  </span>
+                  <span>avg {Math.round(avgPrice * 100)}¢</span>
+                  {bet.verdict === "open" && pos.curPrice > 0 && (
+                    <>
+                      <span aria-hidden className="opacity-50">
+                        ·
+                      </span>
+                      <span>
+                        market {Math.round(pos.curPrice * 100)}¢ (
+                        {(pos.curPrice * 100).toFixed(0)}% implied)
+                      </span>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -376,7 +419,7 @@ function BetIcon({
       <img
         src={icon}
         alt=""
-        className="w-20 h-20 sm:w-28 sm:h-28 md:w-36 md:h-36 border border-border shrink-0 object-cover"
+        className="w-16 h-16 sm:w-24 sm:h-24 md:w-28 md:h-28 border border-border shrink-0 object-cover"
       />
     );
   }
@@ -384,37 +427,34 @@ function BetIcon({
   return (
     <span
       aria-hidden
-      className="w-20 h-20 sm:w-28 sm:h-28 md:w-36 md:h-36 border border-border bg-surface-elevated shrink-0 flex items-center justify-center font-mono text-2xl md:text-4xl font-medium"
+      className="w-16 h-16 sm:w-24 sm:h-24 md:w-28 md:h-28 border border-border bg-surface-elevated shrink-0 flex items-center justify-center font-mono text-2xl md:text-4xl font-medium"
     >
       {initial}
     </span>
   );
 }
 
-function Stat({
-  label,
-  primary,
-  secondary,
-  tone,
-}: {
+interface StatProps {
   label: string;
   primary: string;
-  secondary: string | null;
+  secondary?: ReactNode;
   tone?: "up" | "down";
-}) {
+}
+
+function Stat({ label, primary, secondary, tone }: StatProps) {
   return (
     <div className="flex flex-col gap-1.5 sm:gap-2 min-w-0">
       <Mono className="text-muted">{label}</Mono>
       <div
         className={cn(
-          "font-medium text-lg sm:text-xl md:text-2xl tabular-nums leading-tight",
+          "font-medium text-lg sm:text-2xl md:text-3xl tabular-nums leading-tight",
           tone === "up" && "text-up",
           tone === "down" && "text-down",
         )}
       >
         {primary}
       </div>
-      {secondary && (
+      {secondary != null && (
         <div className="font-mono text-[10px] md:text-xs tabular-nums text-muted">
           {secondary}
         </div>
@@ -521,6 +561,7 @@ function describeAction(event: ActivityEvent): { symbol: string; label: string }
   if (event.type === "SPLIT") return { symbol: "⊖", label: "Split" };
   if (event.type === "CONVERSION") return { symbol: "↔", label: "Convert" };
   if (event.type === "REWARD") return { symbol: "★", label: "Reward" };
+  if (event.type === "LOST") return { symbol: "✕", label: "Lost" };
   return { symbol: "·", label: "Other" };
 }
 

@@ -64,6 +64,9 @@ export type ActivityType =
   | "SPLIT"
   | "CONVERSION"
   | "REWARD"
+  // Emitted only for settled custom bets — Polymarket's API never sends it,
+  // so it stays out of KNOWN_ACTIVITY_TYPES.
+  | "LOST"
   | "OTHER";
 
 export interface ActivityEvent {
