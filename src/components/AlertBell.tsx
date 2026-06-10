@@ -9,12 +9,13 @@ import { betHref } from "@/lib/betId";
 
 const STORAGE_KEY = "alertsLastUpdated";
 const POLL_MS = 30_000;
+const MAX_DISPLAYED = 50;
 
 interface BetAlert {
   kind: "bet";
   id: string;
   timestamp: number;
-  title: string;
+  title: string | null;
   outcome: string | null;
   price: number | null;
   usdSize: number;
@@ -35,17 +36,15 @@ type AlertItem = BetAlert | InvestmentAlert;
 
 function extractBetAlerts(
   activity: ActivityEvent[] | null | undefined,
-  since: number,
 ): BetAlert[] {
   if (!activity) return [];
   return activity
     .filter((e) => e.type === "TRADE" && e.side === "BUY")
-    .filter((e) => e.timestamp > since)
     .map<BetAlert>((e, i) => ({
       kind: "bet",
       id: `${e.txHash ?? "row"}-${e.timestamp}-${i}`,
       timestamp: e.timestamp,
-      title: e.title ?? "New bet placed",
+      title: e.title,
       outcome: e.outcome,
       price: e.price,
       usdSize: Math.abs(e.usdcSize),
@@ -57,11 +56,9 @@ function extractBetAlerts(
 
 function extractInvestmentAlerts(
   investments: RecentInvestment[] | null,
-  since: number,
 ): InvestmentAlert[] {
   if (!investments) return [];
   return investments
-    .filter((inv) => inv.timestamp > since)
     .map<InvestmentAlert>((inv) => ({
       kind: "investment",
       id: `inv-${inv.id}`,
@@ -74,11 +71,10 @@ function extractInvestmentAlerts(
 function collectAlerts(
   activity: ActivityEvent[] | null | undefined,
   investments: RecentInvestment[] | null,
-  since: number,
 ): AlertItem[] {
   return [
-    ...extractBetAlerts(activity, since),
-    ...extractInvestmentAlerts(investments, since),
+    ...extractBetAlerts(activity),
+    ...extractInvestmentAlerts(investments),
   ].sort((a, b) => b.timestamp - a.timestamp);
 }
 
@@ -157,17 +153,33 @@ export function AlertBell() {
     return () => clearInterval(id);
   }, []);
 
-  const newAlerts = useMemo(() => {
-    if (lastUpdated == null) return [];
-    return collectAlerts(activity, investments, lastUpdated);
-  }, [activity, investments, lastUpdated]);
+  const allAlerts = useMemo(
+    () => collectAlerts(activity, investments),
+    [activity, investments],
+  );
 
-  const displayedAlerts = useMemo(() => {
-    if (snapshotLastUpdated == null) return [];
-    return collectAlerts(activity, investments, snapshotLastUpdated);
-  }, [activity, investments, snapshotLastUpdated]);
+  const displayedAlerts = useMemo(
+    () => allAlerts.slice(0, MAX_DISPLAYED),
+    [allAlerts],
+  );
 
-  const hasNew = newAlerts.length > 0;
+  // Drives the red dot: alerts that arrived since the last time the
+  // dropdown was opened.
+  const newCount = useMemo(() => {
+    if (lastUpdated == null) return 0;
+    return allAlerts.filter((a) => a.timestamp > lastUpdated).length;
+  }, [allAlerts, lastUpdated]);
+
+  // Drives the highlight + header count while the dropdown is open. Uses the
+  // snapshot cutoff so rows stay marked as new even after lastUpdated is
+  // bumped on open.
+  const snapshotNewCount = useMemo(() => {
+    if (snapshotLastUpdated == null) return 0;
+    return displayedAlerts.filter((a) => a.timestamp > snapshotLastUpdated)
+      .length;
+  }, [displayedAlerts, snapshotLastUpdated]);
+
+  const hasNew = newCount > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -201,7 +213,7 @@ export function AlertBell() {
         onClick={handleToggle}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={hasNew ? `Alerts, ${newAlerts.length} new` : "Alerts"}
+        aria-label={hasNew ? `Alerts, ${newCount} new` : "Alerts"}
         className="text-muted hover:text-foreground transition-colors cursor-pointer relative inline-flex items-center justify-center leading-none align-middle"
       >
         <BellIcon />
@@ -225,15 +237,15 @@ export function AlertBell() {
             <span className="font-mono text-[10px] uppercase tracking-widest text-muted-strong">
               Alerts
             </span>
-            {displayedAlerts.length > 0 && (
+            {snapshotNewCount > 0 && (
               <span className="font-mono text-[10px] uppercase tracking-widest text-muted tabular-nums">
-                {displayedAlerts.length} new
+                {snapshotNewCount} new
               </span>
             )}
           </div>
           {displayedAlerts.length === 0 ? (
             <div className="px-4 py-8 text-muted text-sm text-center">
-              No new alerts
+              No alerts yet
             </div>
           ) : (
             <ul className="max-h-[420px] overflow-y-auto">
@@ -245,6 +257,10 @@ export function AlertBell() {
                   <AlertRow
                     item={a}
                     now={now}
+                    isNew={
+                      snapshotLastUpdated != null &&
+                      a.timestamp > snapshotLastUpdated
+                    }
                     onNavigate={() => setOpen(false)}
                   />
                 </li>
@@ -279,32 +295,40 @@ function BellIcon() {
 function AlertRow({
   item,
   now,
+  isNew,
   onNavigate,
 }: {
   item: AlertItem;
   now: number;
+  isNew: boolean;
   onNavigate: () => void;
 }) {
+  const rowClass = cn(
+    "relative flex items-start gap-3 px-4 py-3 transition-colors",
+    isNew
+      ? "bg-foreground/[0.05] hover:bg-foreground/[0.08]"
+      : "hover:bg-foreground/[0.04]",
+  );
+  const newAccent = isNew ? (
+    <span
+      aria-hidden
+      className="absolute left-0 top-0 bottom-0 w-0.5 bg-down"
+    />
+  ) : null;
+
   if (item.kind === "investment") {
     return (
       <Link href="/owners" onClick={onNavigate} className="block">
-        <div className="flex items-start gap-3 px-4 py-3 hover:bg-foreground/[0.04] transition-colors">
+        <div className={rowClass}>
+          {newAccent}
           <SourceIcon icon={null} source={item.name} />
           <div className="flex-1 min-w-0">
-            <div className="text-sm leading-snug line-clamp-2">{item.name}</div>
-            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-              <span
-                className={cn(
-                  "font-mono text-[10px] uppercase tracking-widest border border-border px-1.5 py-0.5 inline-block",
-                  item.isNewInvestor
-                    ? "bg-foreground text-background"
-                    : "bg-background text-foreground",
-                )}
-              >
-                {item.isNewInvestor ? "New investor" : "New investment"}
-              </span>
+            <div className="text-sm leading-snug">
+              {item.isNewInvestor
+                ? `${item.name} joined as a new investor`
+                : `${item.name} made a new investment`}
             </div>
-            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted">
+            <div className="mt-1 text-xs text-muted">
               {relativeTime(item.timestamp, now)}
             </div>
           </div>
@@ -316,34 +340,41 @@ function AlertRow({
   const href =
     item.slug && item.outcome ? betHref(item.slug, item.outcome) : null;
   const outcomeYes = (item.outcome ?? "").toLowerCase() === "yes";
+  const multiplier = formatMultiplier(item.price);
 
   const body = (
-    <div className="flex items-start gap-3 px-4 py-3 hover:bg-foreground/[0.04] transition-colors">
+    <div className={rowClass}>
+      {newAccent}
       <SourceIcon icon={item.icon} source={item.source} />
       <div className="flex-1 min-w-0">
-        <div className="text-sm leading-snug line-clamp-2">{item.title}</div>
-        <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+        <div className="text-sm leading-snug line-clamp-2 text-muted-strong">
+          {item.title ?? "Bet placed"}
+        </div>
+        <div className="mt-1 font-mono tabular-nums text-sm font-semibold text-foreground leading-snug">
+          ${item.usdSize.toFixed(2)}
+          {multiplier && (
+            <>
+              <span className="text-muted"> · </span>
+              {multiplier}
+            </>
+          )}
+        </div>
+        <div className="mt-1 flex items-center gap-2 flex-wrap">
           {item.outcome && (
             <span
               className={cn(
-                "font-mono text-[10px] uppercase tracking-widest border border-border px-1.5 py-0.5 inline-block",
+                "font-mono text-[10px] border border-border px-1.5 py-0.5 inline-block",
                 outcomeYes
                   ? "bg-foreground text-background"
                   : "bg-background text-foreground",
               )}
             >
               {item.outcome}
-              {item.price != null
-                ? ` ${Math.round(item.price * 100)}¢`
-                : ""}
             </span>
           )}
-          <span className="font-mono text-[10px] uppercase tracking-widest text-muted-strong tabular-nums">
-            ${item.usdSize.toFixed(2)}
+          <span className="text-xs text-muted">
+            {relativeTime(item.timestamp, now)}
           </span>
-        </div>
-        <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted">
-          {relativeTime(item.timestamp, now)}
         </div>
       </div>
     </div>
@@ -385,6 +416,13 @@ function SourceIcon({
       {initial}
     </span>
   );
+}
+
+function formatMultiplier(price: number | null | undefined): string | null {
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  const mult = 1 / price;
+  const rounded = Math.round(mult * 100) / 100;
+  return `${rounded}x`;
 }
 
 function relativeTime(ms: number, now: number): string {
