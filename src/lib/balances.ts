@@ -201,9 +201,11 @@ async function fetchOwnerUsdc(owner: string): Promise<number | null> {
   const balances = await Promise.all(
     POLYGON_CASH_TOKENS.map((token) => fetchErc20Balance(token, owner)),
   );
-  const parts = balances.filter((v): v is number => v != null);
-  if (parts.length === 0) return null;
-  return parts.reduce((s, v) => s + v, 0);
+  // All-or-nothing: resting cash sits mostly in pUSD, so a partial read
+  // (one token call rate-limited) would undercount badly. Unknown beats
+  // wrong — null lets the client merge hold the last good value.
+  if (balances.some((v) => v == null)) return null;
+  return (balances as number[]).reduce((s, v) => s + v, 0);
 }
 
 interface ParsedTokenAccount {
@@ -276,11 +278,13 @@ async function fetchPolymarketCashUsdc(): Promise<number | null> {
     bridges.evm ? fetchOwnerUsdc(bridges.evm) : Promise.resolve(null),
     bridges.svm ? fetchSolanaUsdc(bridges.svm) : Promise.resolve(null),
   ]);
-  const parts = [proxy, evmBridge, svmBridge].filter(
-    (v): v is number => v != null,
-  );
-  if (parts.length === 0) return null;
-  return parts.reduce((s, v) => s + v, 0);
+  // A bridge leg is only legitimately absent when there is no relay address;
+  // if a relay exists but its read failed, the total is unknowable — return
+  // null rather than silently undercounting in-flight deposits.
+  if (proxy == null) return null;
+  if (bridges.evm && evmBridge == null) return null;
+  if (bridges.svm && svmBridge == null) return null;
+  return proxy + (evmBridge ?? 0) + (svmBridge ?? 0);
 }
 
 export interface PolymarketMarketInfo {
@@ -599,7 +603,14 @@ export async function getLiveBalances(): Promise<LiveBalances> {
     polyCashUsdc != null && usdNok != null ? polyCashUsdc * usdNok : null;
 
   const solNativeUsd = sol != null && solUsd != null ? sol * solUsd : null;
-  const phantomUsd = sumOrNull([solNativeUsd, stables.usd]);
+  // All-or-nothing: if the token query is rate-limited while getBalance
+  // succeeds, a partial sum would collapse the wallet to its SOL dust and
+  // sail through the client's stale-value failsafe (non-null replaces the
+  // last good value). Null keeps the previous reading on screen instead.
+  const phantomUsd =
+    solNativeUsd != null && stables.usd != null
+      ? solNativeUsd + stables.usd
+      : null;
   const phantomNok =
     phantomUsd != null && usdNok != null ? phantomUsd * usdNok : null;
 
