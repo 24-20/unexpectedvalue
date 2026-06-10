@@ -25,6 +25,10 @@ function mergeBalances(prev: LiveBalances, next: LiveBalances): LiveBalances {
     address: next.cash.phantom.address || prev.cash.phantom.address,
     sol: pick(next.cash.phantom.sol, prev.cash.phantom.sol),
     stableUsd: pick(next.cash.phantom.stableUsd, prev.cash.phantom.stableUsd),
+    usdcAccount: pick(
+      next.cash.phantom.usdcAccount,
+      prev.cash.phantom.usdcAccount,
+    ),
     usd: pick(next.cash.phantom.usd, prev.cash.phantom.usd),
     nok: pick(next.cash.phantom.nok, prev.cash.phantom.nok),
   };

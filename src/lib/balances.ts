@@ -93,6 +93,7 @@ export interface LiveBalances {
     phantom: {
       sol: number | null;
       stableUsd: number | null;
+      usdcAccount: string | null;
       usd: number | null;
       nok: number | null;
       address: string;
@@ -203,6 +204,7 @@ async function fetchOwnerUsdc(owner: string): Promise<number | null> {
 }
 
 interface ParsedTokenAccount {
+  pubkey: string;
   account: {
     data: {
       parsed: {
@@ -491,7 +493,14 @@ async function fetchSolBalance(): Promise<number | null> {
   return result.value / LAMPORTS_PER_SOL;
 }
 
-async function fetchStableUsd(): Promise<number | null> {
+interface StableBalances {
+  usd: number | null;
+  // Token account holding the wallet's USDC — verify links point here so
+  // visitors land on the USDC balance instead of the (near-zero) SOL view.
+  usdcAccount: string | null;
+}
+
+async function fetchStableUsd(): Promise<StableBalances> {
   const result = await solRpc<{ value: ParsedTokenAccount[] }>({
     jsonrpc: "2.0",
     id: 2,
@@ -502,16 +511,22 @@ async function fetchStableUsd(): Promise<number | null> {
       { encoding: "jsonParsed" },
     ],
   });
-  if (!result?.value) return null;
+  if (!result?.value) return { usd: null, usdcAccount: null };
   let sum = 0;
+  let usdcAccount: string | null = null;
+  let usdcMax = -1;
   for (const acc of result.value) {
     const info = acc.account?.data?.parsed?.info;
     if (!info) continue;
     if (!STABLE_MINTS.has(info.mint)) continue;
     const amount = info.tokenAmount?.uiAmount;
     if (typeof amount === "number") sum += amount;
+    if (info.mint === USDC_MINT_SOL && acc.pubkey && (amount ?? 0) > usdcMax) {
+      usdcMax = amount ?? 0;
+      usdcAccount = acc.pubkey;
+    }
   }
-  return sum;
+  return { usd: sum, usdcAccount };
 }
 
 async function fetchRates(): Promise<{
@@ -549,7 +564,7 @@ export async function getLiveBalances(): Promise<LiveBalances> {
     polyActivity,
     customBets,
     sol,
-    stableUsd,
+    stables,
     rates,
   ] = await Promise.all([
     fetchPolymarketBetsUsd(),
@@ -581,7 +596,7 @@ export async function getLiveBalances(): Promise<LiveBalances> {
     polyCashUsdc != null && usdNok != null ? polyCashUsdc * usdNok : null;
 
   const solNativeUsd = sol != null && solUsd != null ? sol * solUsd : null;
-  const phantomUsd = sumOrNull([solNativeUsd, stableUsd]);
+  const phantomUsd = sumOrNull([solNativeUsd, stables.usd]);
   const phantomNok =
     phantomUsd != null && usdNok != null ? phantomUsd * usdNok : null;
 
@@ -601,7 +616,8 @@ export async function getLiveBalances(): Promise<LiveBalances> {
       },
       phantom: {
         sol,
-        stableUsd,
+        stableUsd: stables.usd,
+        usdcAccount: stables.usdcAccount,
         usd: phantomUsd,
         nok: phantomNok,
         address: SOLANA_ADDRESS,

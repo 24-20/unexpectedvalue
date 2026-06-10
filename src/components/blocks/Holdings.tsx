@@ -49,17 +49,17 @@ export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
     { value: bets, fill: "var(--muted)" },
   ];
 
-  const arcs = slices
-    .filter((s) => s.value > 0)
-    .map((slice) => {
-      const a0 = acc;
-      const a1 = acc + (slice.value / total) * Math.PI * 2;
-      acc = a1;
-      return {
-        d: donutSlice(R_OUT, R_IN, a0, a1),
-        fill: slice.fill,
-      };
-    });
+  const visible = slices.filter((s) => s.value > 0);
+
+  const arcs = visible.map((slice) => {
+    const a0 = acc;
+    const a1 = acc + (slice.value / total) * Math.PI * 2;
+    acc = a1;
+    return {
+      d: donutSlice(R_OUT, R_IN, a0, a1),
+      fill: slice.fill,
+    };
+  });
 
   return (
     <div className="py-4 sm:py-5 flex items-center gap-6 sm:gap-8">
@@ -68,7 +68,7 @@ export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
         className="w-24 sm:w-28 md:w-32 h-auto shrink-0"
         aria-label="Holdings allocation"
       >
-        {arcs.length === 0 ? (
+        {visible.length === 0 ? (
           <circle
             cx={CX}
             cy={CY}
@@ -77,6 +77,18 @@ export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
             stroke="var(--border-strong)"
             strokeWidth={R_OUT - R_IN}
             strokeDasharray="3 3"
+          />
+        ) : visible.length === 1 ? (
+          // A lone 100% slice sweeps a full circle, so its arc path starts
+          // and ends on the same point and SVG draws nothing — render a
+          // solid ring in the slice color instead.
+          <circle
+            cx={CX}
+            cy={CY}
+            r={(R_OUT + R_IN) / 2}
+            fill="none"
+            stroke={visible[0].fill}
+            strokeWidth={R_OUT - R_IN}
           />
         ) : (
           arcs.map((arc, i) => (

@@ -1,5 +1,5 @@
 import { Container, Mono } from "@/components/ui";
-import { PolymarketIcon, SolanaIcon } from "@/components/icons";
+import { PolymarketIcon, UsdcIcon } from "@/components/icons";
 import { getLiveBalances, type LiveBalances } from "@/lib/balances";
 import { formatNOK } from "@/lib/format";
 
@@ -19,15 +19,20 @@ interface VerifyLink {
 }
 
 function buildLinks(b: LiveBalances): VerifyLink[] {
+  // Cash sits in USDC since the SOL swap-out, so link straight to the USDC
+  // token account — the wallet overview headlines the near-zero SOL balance.
+  const usdcHref = b.cash.phantom.usdcAccount
+    ? `https://solscan.io/account/${b.cash.phantom.usdcAccount}`
+    : `https://solscan.io/account/${b.cash.phantom.address}`;
   return [
     {
       network: "Solana",
       label: "Phantom wallet",
-      href: `https://solscan.io/account/${b.cash.phantom.address}`,
+      href: usdcHref,
       explorer: "Open on Solscan",
       address: b.cash.phantom.address,
-      icon: <SolanaIcon className="w-8 h-8" />,
-      metrics: [{ label: "Cash", value: b.cash.phantom.nok }],
+      icon: <UsdcIcon className="w-8 h-8" />,
+      metrics: [{ label: "Cash (USDC)", value: b.cash.phantom.nok }],
     },
     {
       network: "Polygon",
