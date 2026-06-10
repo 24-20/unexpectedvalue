@@ -49,7 +49,14 @@ function summarizeBet(
   const position =
     positions.find((p) => p.slug === slug && p.outcome === outcome) ?? null;
   const related = activity
-    .filter((a) => a.slug === slug && a.outcome === outcome)
+    .filter(
+      (a) =>
+        a.slug === slug &&
+        // Market-level events (REDEEM, MERGE, CONVERSION…) come back from
+        // the data API without an outcome — keep them. Trades always carry
+        // one, so other outcomes' buys/sells still stay off this page.
+        (!a.outcome || a.outcome === outcome),
+    )
     .sort((a, b) => b.timestamp - a.timestamp);
 
   if (!position && related.length === 0 && !market) return null;
