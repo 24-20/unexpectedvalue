@@ -57,6 +57,49 @@ export async function searchInvestorsByName(query: string): Promise<Investor[]> 
   return (data as InvestorRow[]).map(rowToInvestor);
 }
 
+// Public-safe view of the investments log for the alert feed. Investor names
+// are already public on /owners, but NOK amounts, equity snapshots, and
+// percentages must never leave the server through this path.
+export interface RecentInvestment {
+  id: number;
+  name: string;
+  isNewInvestor: boolean;
+  timestamp: number; // ms epoch
+}
+
+interface RecentInvestmentRow {
+  id: number;
+  percentage_before: number | string;
+  created_at: string;
+  investors: { name: string } | { name: string }[] | null;
+}
+
+export async function getRecentInvestments(
+  limit = 25,
+): Promise<RecentInvestment[]> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("investments")
+    .select("id, percentage_before, created_at, investors(name)")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) {
+    console.error("getRecentInvestments failed", error);
+    return [];
+  }
+  return (data as unknown as RecentInvestmentRow[]).map((r) => {
+    const investor = Array.isArray(r.investors) ? r.investors[0] : r.investors;
+    return {
+      id: r.id,
+      name: investor?.name ?? "Unknown",
+      // record_investment writes percentage_before = 0 only on the deposit
+      // that created the investor row, so 0 marks a first-time investor.
+      isNewInvestor: Number(r.percentage_before) === 0,
+      timestamp: new Date(r.created_at).getTime(),
+    };
+  });
+}
+
 export function slugifyName(name: string): string {
   return name
     .trim()

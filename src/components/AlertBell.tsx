@@ -4,12 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 import type { ActivityEvent, LiveBalances } from "@/lib/balances";
+import type { RecentInvestment } from "@/lib/investors";
 import { betHref } from "@/lib/betId";
 
 const STORAGE_KEY = "alertsLastUpdated";
 const POLL_MS = 30_000;
 
-interface AlertItem {
+interface BetAlert {
+  kind: "bet";
   id: string;
   timestamp: number;
   title: string;
@@ -21,16 +23,26 @@ interface AlertItem {
   source: string;
 }
 
-function extractAlerts(
+interface InvestmentAlert {
+  kind: "investment";
+  id: string;
+  timestamp: number;
+  name: string;
+  isNewInvestor: boolean;
+}
+
+type AlertItem = BetAlert | InvestmentAlert;
+
+function extractBetAlerts(
   activity: ActivityEvent[] | null | undefined,
   since: number,
-): AlertItem[] {
+): BetAlert[] {
   if (!activity) return [];
   return activity
     .filter((e) => e.type === "TRADE" && e.side === "BUY")
     .filter((e) => e.timestamp > since)
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .map<AlertItem>((e, i) => ({
+    .map<BetAlert>((e, i) => ({
+      kind: "bet",
       id: `${e.txHash ?? "row"}-${e.timestamp}-${i}`,
       timestamp: e.timestamp,
       title: e.title ?? "New bet placed",
@@ -43,6 +55,33 @@ function extractAlerts(
     }));
 }
 
+function extractInvestmentAlerts(
+  investments: RecentInvestment[] | null,
+  since: number,
+): InvestmentAlert[] {
+  if (!investments) return [];
+  return investments
+    .filter((inv) => inv.timestamp > since)
+    .map<InvestmentAlert>((inv) => ({
+      kind: "investment",
+      id: `inv-${inv.id}`,
+      timestamp: inv.timestamp,
+      name: inv.name,
+      isNewInvestor: inv.isNewInvestor,
+    }));
+}
+
+function collectAlerts(
+  activity: ActivityEvent[] | null | undefined,
+  investments: RecentInvestment[] | null,
+  since: number,
+): AlertItem[] {
+  return [
+    ...extractBetAlerts(activity, since),
+    ...extractInvestmentAlerts(investments, since),
+  ].sort((a, b) => b.timestamp - a.timestamp);
+}
+
 export function AlertBell() {
   const [open, setOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -51,6 +90,9 @@ export function AlertBell() {
   );
   const [hasInitialized, setHasInitialized] = useState(false);
   const [activity, setActivity] = useState<ActivityEvent[] | null>(null);
+  const [investments, setInvestments] = useState<RecentInvestment[] | null>(
+    null,
+  );
   const [now, setNow] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
 
@@ -85,8 +127,25 @@ export function AlertBell() {
         // swallow — polling will retry
       }
     }
-    fetchActivity();
-    const id = setInterval(fetchActivity, POLL_MS);
+    async function fetchInvestments() {
+      try {
+        const res = await fetch("/api/investments", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          investments: RecentInvestment[] | null;
+        };
+        if (cancelled) return;
+        setInvestments(data.investments ?? null);
+      } catch {
+        // swallow — polling will retry
+      }
+    }
+    function poll() {
+      fetchActivity();
+      fetchInvestments();
+    }
+    poll();
+    const id = setInterval(poll, POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
@@ -100,13 +159,13 @@ export function AlertBell() {
 
   const newAlerts = useMemo(() => {
     if (lastUpdated == null) return [];
-    return extractAlerts(activity, lastUpdated);
-  }, [activity, lastUpdated]);
+    return collectAlerts(activity, investments, lastUpdated);
+  }, [activity, investments, lastUpdated]);
 
   const displayedAlerts = useMemo(() => {
     if (snapshotLastUpdated == null) return [];
-    return extractAlerts(activity, snapshotLastUpdated);
-  }, [activity, snapshotLastUpdated]);
+    return collectAlerts(activity, investments, snapshotLastUpdated);
+  }, [activity, investments, snapshotLastUpdated]);
 
   const hasNew = newAlerts.length > 0;
 
@@ -226,6 +285,34 @@ function AlertRow({
   now: number;
   onNavigate: () => void;
 }) {
+  if (item.kind === "investment") {
+    return (
+      <Link href="/owners" onClick={onNavigate} className="block">
+        <div className="flex items-start gap-3 px-4 py-3 hover:bg-foreground/[0.04] transition-colors">
+          <SourceIcon icon={null} source={item.name} />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm leading-snug line-clamp-2">{item.name}</div>
+            <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+              <span
+                className={cn(
+                  "font-mono text-[10px] uppercase tracking-widest border border-border px-1.5 py-0.5 inline-block",
+                  item.isNewInvestor
+                    ? "bg-foreground text-background"
+                    : "bg-background text-foreground",
+                )}
+              >
+                {item.isNewInvestor ? "New investor" : "New investment"}
+              </span>
+            </div>
+            <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted">
+              {relativeTime(item.timestamp, now)}
+            </div>
+          </div>
+        </div>
+      </Link>
+    );
+  }
+
   const href =
     item.slug && item.outcome ? betHref(item.slug, item.outcome) : null;
   const outcomeYes = (item.outcome ?? "").toLowerCase() === "yes";
