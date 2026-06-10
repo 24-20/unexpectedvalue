@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/cn";
+import { activityValueKind, formatSoldPct } from "@/lib/activityValue";
 import { formatNOK, formatNOKDelta, formatPct } from "@/lib/format";
 import type {
   ActivityEvent,
@@ -84,10 +85,14 @@ export function PolymarketBets({
 
   const sortedActivity = useMemo(() => {
     const sorted = [...activity];
+    // Win/loss ranks by realized PnL, not cash moved — a big buy is volume,
+    // not a loss. Events without a PnL (buys, deposits, unknown basis) sort
+    // as 0 and cluster between the wins and the losses; ties keep their
+    // newest-first order via the stable sort.
     if (historySort === "biggest_win") {
-      sorted.sort((a, b) => signedValueUsd(b) - signedValueUsd(a));
+      sorted.sort((a, b) => (b.pnlUsd ?? 0) - (a.pnlUsd ?? 0));
     } else if (historySort === "biggest_loss") {
-      sorted.sort((a, b) => signedValueUsd(a) - signedValueUsd(b));
+      sorted.sort((a, b) => (a.pnlUsd ?? 0) - (b.pnlUsd ?? 0));
     } else {
       sorted.sort((a, b) => b.timestamp - a.timestamp);
     }
@@ -429,6 +434,10 @@ function ActivityRow({
   const positive = signed > 0;
   const negative = signed < 0;
   const valueNok = usdNok != null ? signed * usdNok : null;
+  const kind = activityValueKind(event);
+  const amountNok = usdNok != null ? Math.abs(event.usdcSize) * usdNok : null;
+  const pnlNok =
+    event.pnlUsd != null && usdNok != null ? event.pnlUsd * usdNok : null;
   const action = describeAction(event);
   const href =
     event.slug && event.outcome ? betHref(event.slug, event.outcome) : null;
@@ -493,19 +502,41 @@ function ActivityRow({
           </div>
         </div>
       </td>
-      <td
-        className={cn(
-          "font-mono text-sm md:text-base tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap",
-          positive ? "text-up" : negative ? "text-down" : "",
-        )}
-      >
-        <div>{formatSignedUsd(signed)}</div>
-        {valueNok != null && (
-          <div className="text-xs md:text-sm mt-0.5 opacity-80">
-            {formatNOK(valueNok)}
-          </div>
-        )}
-      </td>
+      {kind === "amount" ? (
+        // Money put in — plain white, kr only, no sign.
+        <td className="font-mono text-sm md:text-base tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap">
+          {amountNok != null ? formatNOK(amountNok) : "—"}
+        </td>
+      ) : kind === "pnl" && pnlNok != null ? (
+        // Realized result of the trade/settlement — signed kr, colored.
+        <td
+          className={cn(
+            "font-mono text-sm md:text-base tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap",
+            pnlNok > 0 ? "text-up" : pnlNok < 0 ? "text-down" : "",
+          )}
+        >
+          <div>{formatNOKDelta(pnlNok)}</div>
+          {event.soldPct != null && (
+            <div className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted mt-0.5">
+              sold {formatSoldPct(event.soldPct)}
+            </div>
+          )}
+        </td>
+      ) : (
+        <td
+          className={cn(
+            "font-mono text-sm md:text-base tabular-nums text-right px-4 md:px-6 py-3 md:py-5 whitespace-nowrap",
+            positive ? "text-up" : negative ? "text-down" : "",
+          )}
+        >
+          <div>{formatSignedUsd(signed)}</div>
+          {valueNok != null && (
+            <div className="text-xs md:text-sm mt-0.5 opacity-80">
+              {formatNOK(valueNok)}
+            </div>
+          )}
+        </td>
+      )}
       <td className="font-mono text-xs md:text-sm tabular-nums text-right text-muted px-4 md:px-6 py-3 md:py-5 whitespace-nowrap hidden sm:table-cell">
         {relativeTime(event.timestamp, now)}
       </td>

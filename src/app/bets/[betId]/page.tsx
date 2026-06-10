@@ -10,6 +10,7 @@ import type {
   PolymarketMarketInfo,
   PolymarketPosition,
 } from "@/lib/balances";
+import { activityValueKind, formatSoldPct } from "@/lib/activityValue";
 import { decodeBetId } from "@/lib/betId";
 import { cn } from "@/lib/cn";
 import {
@@ -511,6 +512,10 @@ function BetActivityRow({
   const positive = signed > 0;
   const negative = signed < 0;
   const valueNok = usdNok != null ? signed * usdNok : null;
+  const kind = activityValueKind(event);
+  const amountNok = usdNok != null ? Math.abs(event.usdcSize) * usdNok : null;
+  const pnlNok =
+    event.pnlUsd != null && usdNok != null ? event.pnlUsd * usdNok : null;
   const action = describeAction(event);
 
   return (
@@ -538,19 +543,41 @@ function BetActivityRow({
           </div>
         )}
       </td>
-      <td
-        className={cn(
-          "font-mono text-sm md:text-base tabular-nums text-right px-5 sm:px-8 md:px-10 py-3 md:py-4 whitespace-nowrap",
-          positive ? "text-up" : negative ? "text-down" : "",
-        )}
-      >
-        <div>{formatSignedUsd(signed)}</div>
-        {valueNok != null && (
-          <div className="text-xs md:text-sm mt-0.5 opacity-80">
-            {formatNOK(valueNok)}
-          </div>
-        )}
-      </td>
+      {kind === "amount" ? (
+        // Money put in — plain white, kr only, no sign.
+        <td className="font-mono text-sm md:text-base tabular-nums text-right px-5 sm:px-8 md:px-10 py-3 md:py-4 whitespace-nowrap">
+          {amountNok != null ? formatNOK(amountNok) : "—"}
+        </td>
+      ) : kind === "pnl" && pnlNok != null ? (
+        // Realized result of the trade/settlement — signed kr, colored.
+        <td
+          className={cn(
+            "font-mono text-sm md:text-base tabular-nums text-right px-5 sm:px-8 md:px-10 py-3 md:py-4 whitespace-nowrap",
+            pnlNok > 0 ? "text-up" : pnlNok < 0 ? "text-down" : "",
+          )}
+        >
+          <div>{formatNOKDelta(pnlNok)}</div>
+          {event.soldPct != null && (
+            <div className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted mt-0.5">
+              sold {formatSoldPct(event.soldPct)}
+            </div>
+          )}
+        </td>
+      ) : (
+        <td
+          className={cn(
+            "font-mono text-sm md:text-base tabular-nums text-right px-5 sm:px-8 md:px-10 py-3 md:py-4 whitespace-nowrap",
+            positive ? "text-up" : negative ? "text-down" : "",
+          )}
+        >
+          <div>{formatSignedUsd(signed)}</div>
+          {valueNok != null && (
+            <div className="text-xs md:text-sm mt-0.5 opacity-80">
+              {formatNOK(valueNok)}
+            </div>
+          )}
+        </td>
+      )}
     </tr>
   );
 }

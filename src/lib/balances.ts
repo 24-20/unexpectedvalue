@@ -82,6 +82,14 @@ export interface ActivityEvent {
   price: number | null;
   shares: number | null;
   txHash: string | null;
+  // Realized result of this event in USD, when derivable: sells/redeems get
+  // it from an average-cost replay of the market's trade history, custom-bet
+  // settlements from stake vs proceeds. Null = not applicable or basis
+  // unknown — the UI then falls back to showing the raw cash amount.
+  pnlUsd: number | null;
+  // For sells only: how much of the then-held position this sale closed,
+  // 0–100. Derived from the same replay (cashed-out bookie bets are 100).
+  soldPct: number | null;
 }
 
 export interface LiveBalances {
@@ -428,7 +436,7 @@ async function fetchActivity(): Promise<ActivityEvent[] | null> {
   });
   const data = await safeJson<RawActivityEvent[]>(res);
   if (!Array.isArray(data)) return null;
-  return data.map<ActivityEvent>((e) => {
+  const events = data.map<ActivityEvent>((e) => {
     const rawType = (e.type ?? "OTHER").toUpperCase();
     const type: ActivityType = KNOWN_ACTIVITY_TYPES.has(rawType as ActivityType)
       ? (rawType as ActivityType)
@@ -449,8 +457,100 @@ async function fetchActivity(): Promise<ActivityEvent[] | null> {
       price: typeof e.price === "number" ? e.price : null,
       shares: typeof e.size === "number" ? e.size : null,
       txHash: e.transactionHash ?? null,
+      pnlUsd: null,
+      soldPct: null,
     };
   });
+  return enrichPolymarketPnl(events);
+}
+
+const PNL_EPS = 1e-6;
+
+// Fills pnlUsd on sells and redeems by replaying each market's history
+// chronologically with an average-cost basis (the same basis Polymarket's
+// avgPrice uses). Anything that makes the basis untrustworthy — share counts
+// minted outside trades (MERGE/SPLIT/CONVERSION), missing share data, selling
+// more than the replay says we hold (truncated history), or a redeem we
+// can't attribute to a single outcome — taints that market and leaves pnlUsd
+// null, so the UI falls back to the raw amount rather than showing a wrong
+// number.
+function enrichPolymarketPnl(events: ActivityEvent[]): ActivityEvent[] {
+  // reverse() first: the API returns newest-first, so this restores
+  // chronological order even within identical timestamps; the stable sort
+  // then only fixes genuinely out-of-order pairs.
+  const asc = [...events].reverse().sort((a, b) => a.timestamp - b.timestamp);
+  const books = new Map<string, { shares: number; cost: number }>();
+  const tainted = new Set<string>();
+
+  for (const e of asc) {
+    const slug = e.slug;
+    if (!slug) continue;
+
+    if (e.type === "MERGE" || e.type === "SPLIT" || e.type === "CONVERSION") {
+      tainted.add(slug);
+      continue;
+    }
+    if (tainted.has(slug)) continue;
+
+    if (e.type === "TRADE" && e.side === "BUY") {
+      if (e.shares == null) {
+        tainted.add(slug);
+        continue;
+      }
+      const key = `${slug}|${e.outcome ?? ""}`;
+      const book = books.get(key) ?? { shares: 0, cost: 0 };
+      book.shares += e.shares;
+      book.cost += Math.abs(e.usdcSize);
+      books.set(key, book);
+      continue;
+    }
+
+    if (e.type === "TRADE" && e.side === "SELL") {
+      const key = `${slug}|${e.outcome ?? ""}`;
+      const book = books.get(key);
+      if (
+        e.shares == null ||
+        !book ||
+        book.shares <= PNL_EPS ||
+        book.shares + PNL_EPS < e.shares
+      ) {
+        tainted.add(slug);
+        continue;
+      }
+      const avg = book.cost / book.shares;
+      e.pnlUsd = Math.abs(e.usdcSize) - e.shares * avg;
+      e.soldPct = (e.shares / book.shares) * 100;
+      book.shares -= e.shares;
+      book.cost -= e.shares * avg;
+      continue;
+    }
+
+    if (e.type === "REDEEM") {
+      // Redeems arrive without an outcome — attribute to the only book of
+      // this market still holding shares.
+      const candidates = [...books.entries()].filter(
+        ([k, b]) => k.startsWith(`${slug}|`) && b.shares > PNL_EPS,
+      );
+      if (candidates.length !== 1) {
+        tainted.add(slug);
+        continue;
+      }
+      const [, book] = candidates[0];
+      const payout = Math.abs(e.usdcSize);
+      // Winning shares redeem at $1 apiece, so payout doubles as the share
+      // count when the API omits it.
+      const shares = e.shares ?? payout;
+      if (book.shares + PNL_EPS < shares) {
+        tainted.add(slug);
+        continue;
+      }
+      const avg = book.cost / book.shares;
+      e.pnlUsd = payout - shares * avg;
+      book.shares -= shares;
+      book.cost -= shares * avg;
+    }
+  }
+  return events;
 }
 
 async function fetchPolymarketPositions(): Promise<

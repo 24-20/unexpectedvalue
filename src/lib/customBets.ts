@@ -87,18 +87,21 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
         price: odds > 0 ? 1 / odds : null, // implied probability
         shares: null,
         txHash: r.id,
+        pnlUsd: null,
+        soldPct: null,
       });
 
       // Settlement event (if applicable)
       if (r.status !== "pending" && r.settled_at) {
         const ts = Number.isNaN(settledMs) ? 0 : settledMs;
         if (r.status === "won") {
+          const proceeds = settledAmount > 0 ? settledAmount : stake * odds;
           activity.push({
             source: r.bookie,
             timestamp: ts,
             type: "REDEEM",
             side: null,
-            usdcSize: settledAmount > 0 ? settledAmount : stake * odds,
+            usdcSize: proceeds,
             title: r.title,
             slug: r.id,
             icon: r.icon_url,
@@ -106,6 +109,8 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
             price: null,
             shares: null,
             txHash: `${r.id}-won`,
+            pnlUsd: proceeds - stake,
+            soldPct: null,
           });
         } else if (r.status === "lost") {
           activity.push({
@@ -121,14 +126,17 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
             price: null,
             shares: null,
             txHash: `${r.id}-lost`,
+            pnlUsd: -stake,
+            soldPct: null,
           });
         } else if (r.status === "void") {
+          const refund = settledAmount > 0 ? settledAmount : stake;
           activity.push({
             source: r.bookie,
             timestamp: ts,
             type: "REDEEM",
             side: null,
-            usdcSize: settledAmount > 0 ? settledAmount : stake,
+            usdcSize: refund,
             title: r.title,
             slug: r.id,
             icon: r.icon_url,
@@ -136,6 +144,8 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
             price: null,
             shares: null,
             txHash: `${r.id}-void`,
+            pnlUsd: refund - stake,
+            soldPct: null,
           });
         } else if (r.status === "cashed_out") {
           activity.push({
@@ -151,6 +161,10 @@ export async function fetchCustomBets(): Promise<CustomBetsResult | null> {
             price: null,
             shares: null,
             txHash: `${r.id}-cashout`,
+            pnlUsd: settledAmount - stake,
+            // A cashout closes the whole ticket — there's no partial cashout
+            // concept in the custom_bets table.
+            soldPct: 100,
           });
         }
       }
