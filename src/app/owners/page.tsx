@@ -2,10 +2,19 @@ import { getInvestors } from "@/lib/investors";
 
 export const dynamic = "force-dynamic";
 
-const SHADES = [
-  "bg-foreground",
-  "bg-foreground/60",
-  "bg-foreground/30",
+// Ten distinct hues (400-weight reads well on the near-black background),
+// ordered so neighbouring segments contrast; cycles past ten owners.
+const COLORS = [
+  "bg-blue-400",
+  "bg-emerald-400",
+  "bg-orange-400",
+  "bg-violet-400",
+  "bg-amber-300",
+  "bg-cyan-400",
+  "bg-rose-400",
+  "bg-lime-400",
+  "bg-fuchsia-400",
+  "bg-teal-400",
 ];
 
 export default async function OwnersPage() {
@@ -26,7 +35,7 @@ export default async function OwnersPage() {
               {owners.map((o, i) => (
                 <div
                   key={o.id}
-                  className={SHADES[i % SHADES.length]}
+                  className={COLORS[i % COLORS.length]}
                   style={{ width: `${o.percentage}%` }}
                   title={`${o.name} — ${o.percentage.toFixed(2)}%`}
                 />
@@ -48,7 +57,7 @@ export default async function OwnersPage() {
                 <div className="flex items-baseline gap-3 min-w-0">
                   <span
                     aria-hidden
-                    className={`inline-block w-2.5 h-2.5 shrink-0 translate-y-0.5 ${SHADES[i % SHADES.length]}`}
+                    className={`inline-block w-2.5 h-2.5 shrink-0 translate-y-0.5 ${COLORS[i % COLORS.length]}`}
                   />
                   <span className="font-mono text-[10px] uppercase tracking-widest text-muted tabular-nums">
                     {(i + 1).toString().padStart(2, "0")}
