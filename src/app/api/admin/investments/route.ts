@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { ADMIN_COOKIE_NAME, verifyAdminCookie } from "@/lib/adminAuth";
 import { recordInvestment, slugifyName } from "@/lib/investors";
 import { getLiveBalances, liveTotalNok } from "@/lib/balances";
+import { broadcastAlertsChanged } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
 
@@ -73,6 +74,9 @@ export async function POST(req: Request) {
       amountNok: amount,
       equityNowNok: equity,
     });
+    // Awaited: in serverless, work left running after the response can be
+    // frozen before it completes. Best-effort — never fails the request.
+    await broadcastAlertsChanged("investment");
     return NextResponse.json({ ok: true, equityBeforeNok: equity, ...result });
   } catch (e) {
     const message = e instanceof Error ? e.message : "unknown error";

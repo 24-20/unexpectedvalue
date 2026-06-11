@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { ADMIN_COOKIE_NAME, verifyAdminCookie } from "@/lib/adminAuth";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { broadcastAlertsChanged } from "@/lib/realtime";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +83,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  // Awaited: in serverless, work left running after the response can be
+  // frozen before it completes. Best-effort — never fails the request.
+  await broadcastAlertsChanged("custom_bet");
   return NextResponse.json({ ok: true, id: data?.id ?? null });
 }
 
@@ -153,5 +157,6 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
+  await broadcastAlertsChanged("custom_bet");
   return NextResponse.json({ ok: true, settledAmountUsd: settledAmount });
 }

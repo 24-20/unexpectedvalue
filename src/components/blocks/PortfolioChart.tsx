@@ -154,13 +154,21 @@ export function PortfolioChart({
 }: PortfolioChartProps) {
   const [range, setRange] = useState<Range>(defaultRange);
   const [viewMode, setViewModeState] = useState<ViewMode>("total");
-  const [ownerIdx, setOwnerIdxState] = useState(0);
+  // Selection is held by owner *name* and resolved to an index at render
+  // time: the owners list refreshes live (a new investment re-sorts the
+  // percentage-ordered list), and a bare index would silently repoint at a
+  // different person.
+  const [ownerName, setOwnerNameState] = useState<string | null>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
+
+  const storedIdx = ownerName
+    ? owners.findIndex((o) => o.name === ownerName)
+    : -1;
+  const ownerIdx = storedIdx >= 0 ? storedIdx : 0;
 
   // Persist the view mode + selected owner across reloads. SSR renders with
   // the defaults; on mount we read localStorage and update state if the user
-  // had a prior choice. The setter wrappers save on every change. Owner is
-  // stored by name (not index) so reordering OWNERS doesn't break it.
+  // had a prior choice. The setter wrappers save on every change.
   useEffect(() => {
     try {
       const storedMode = localStorage.getItem("portfolio:viewMode");
@@ -168,15 +176,10 @@ export function PortfolioChart({
         setViewModeState(storedMode);
       }
       const storedOwner = localStorage.getItem("portfolio:owner");
-      if (storedOwner) {
-        const idx = owners.findIndex((o) => o.name === storedOwner);
-        if (idx >= 0) setOwnerIdxState(idx);
-      }
+      if (storedOwner) setOwnerNameState(storedOwner);
     } catch {
       // localStorage unavailable (e.g. private mode) — ignore.
     }
-    // Run once on mount; owners is a stable prop in practice.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const setViewMode = (v: ViewMode) => {
@@ -186,10 +189,11 @@ export function PortfolioChart({
     } catch {}
   };
   const setOwnerIdx = (idx: number) => {
-    setOwnerIdxState(idx);
+    const name = owners[idx]?.name;
+    if (!name) return;
+    setOwnerNameState(name);
     try {
-      const name = owners[idx]?.name;
-      if (name) localStorage.setItem("portfolio:owner", name);
+      localStorage.setItem("portfolio:owner", name);
     } catch {}
   };
 

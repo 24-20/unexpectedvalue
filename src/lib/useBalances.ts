@@ -70,13 +70,14 @@ function mergeBalances(prev: LiveBalances, next: LiveBalances): LiveBalances {
 }
 
 // Polls /api/balances and merges each response over the previous one, so a
-// leg that fails upstream keeps showing its last good value. `refreshNow`
-// fires one immediate fetch on mount — used when the server-rendered data
-// arrived incomplete, so recovery doesn't wait a full poll interval.
+// leg that fails upstream keeps showing its last good value. `kick` is a
+// counter: any value > 0 triggers an immediate fetch when it changes (and on
+// mount), used for incomplete SSR data, realtime change events, and the tab
+// regaining focus — recovery shouldn't wait out a poll interval.
 export function usePolledBalances(
   initial: LiveBalances,
   pollMs = 10_000,
-  refreshNow = false,
+  kick = 0,
 ): LiveBalances {
   const [data, setData] = useState<LiveBalances>(initial);
 
@@ -94,13 +95,13 @@ export function usePolledBalances(
       }
     };
 
-    if (refreshNow) refresh();
+    if (kick > 0) refresh();
     const pollId = setInterval(refresh, pollMs);
     return () => {
       cancelled = true;
       clearInterval(pollId);
     };
-  }, [pollMs, refreshNow]);
+  }, [pollMs, kick]);
 
   return data;
 }

@@ -5,10 +5,13 @@ import Link from "next/link";
 import { cn } from "@/lib/cn";
 import type { ActivityEvent, LiveBalances } from "@/lib/balances";
 import type { RecentInvestment } from "@/lib/investors";
+import { useAlertsChannel } from "@/lib/useAlertsChannel";
 import { betHref } from "@/lib/betId";
 
 const STORAGE_KEY = "alertsLastUpdated";
-const POLL_MS = 30_000;
+// Polling is the fallback freshness floor — realtime broadcasts and tab
+// focus trigger immediate refetches ahead of it.
+const POLL_MS = 10_000;
 const MAX_DISPLAYED = 50;
 
 interface BetAlert {
@@ -90,7 +93,22 @@ export function AlertBell() {
     null,
   );
   const [now, setNow] = useState(() => Date.now());
+  // Bumping this re-runs the poll effect: immediate fetch + interval restart.
+  const [kick, setKick] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Realtime: refetch the moment the server announces a change.
+  useAlertsChannel(() => setKick((k) => k + 1));
+
+  // Refetch when the tab becomes visible again.
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") setKick((k) => k + 1);
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
 
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -146,7 +164,7 @@ export function AlertBell() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [hasInitialized]);
+  }, [hasInitialized, kick]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);

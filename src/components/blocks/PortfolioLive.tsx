@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Container } from "@/components/ui";
 import { Holdings } from "./Holdings";
 import { PolymarketBets } from "./PolymarketBets";
 import { PortfolioChart, type LiveEquityPoint } from "./PortfolioChart";
 import { usePolledBalances } from "@/lib/useBalances";
+import { useAlertsChannel } from "@/lib/useAlertsChannel";
 import { livePnlNok, liveTotalNok } from "@/lib/equity";
 import type { LiveBalances } from "@/lib/balances";
 import type { Range, SeriesByMetric } from "@/lib/portfolio";
@@ -21,10 +22,10 @@ interface PortfolioLiveProps {
 }
 
 // Owns the single /api/balances poll for the portfolio page and fans the
-// merged result out to the chart, holdings, and bets blocks. When the
-// server render arrived incomplete (an upstream leg failed during SSR),
-// the first refresh fires immediately so the page heals without waiting
-// out a poll interval — or a manual reload.
+// merged result out to the chart, holdings, and bets blocks. Three things
+// can trigger an immediate refetch ahead of the poll cadence: the server
+// render arriving incomplete, a realtime change broadcast, and the tab
+// regaining visibility.
 export function PortfolioLive({
   initial,
   series,
@@ -35,7 +36,50 @@ export function PortfolioLive({
   // cache revalidates only re-downloads identical JSON.
   pollMs = 5_000,
 }: PortfolioLiveProps) {
-  const data = usePolledBalances(initial, pollMs, liveTotalNok(initial) == null);
+  // kick > 0 forces an immediate balances fetch whenever it changes; start
+  // at 1 when SSR data came in incomplete so healing doesn't wait.
+  const [kick, setKick] = useState(() =>
+    liveTotalNok(initial) == null ? 1 : 0,
+  );
+  const data = usePolledBalances(initial, pollMs, kick);
+
+  // Owners list can change live (new investment shifts every percentage).
+  const [liveOwners, setLiveOwners] = useState<ReadonlyArray<Owner>>(owners);
+
+  const refetchOwners = useCallback(async () => {
+    try {
+      const res = await fetch("/api/investors", { cache: "no-store" });
+      if (!res.ok) return;
+      const body = (await res.json()) as { owners?: Owner[] };
+      if (Array.isArray(body.owners) && body.owners.length > 0) {
+        setLiveOwners(body.owners);
+      }
+    } catch {
+      // Keep the last known list; the next event or reload will catch up.
+    }
+  }, []);
+
+  // Realtime broadcast: a change event means fresh data exists *right now*.
+  useAlertsChannel(
+    useCallback(
+      (kind) => {
+        setKick((k) => k + 1);
+        if (kind === "investment") void refetchOwners();
+      },
+      [refetchOwners],
+    ),
+  );
+
+  // Returning to the tab refetches immediately instead of waiting out the
+  // poll interval — the cheapest perceived-freshness win there is.
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") setKick((k) => k + 1);
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () =>
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
 
   // Memoized by data identity: polls that fail or return nothing new must
   // not produce a fresh object, or the chart would redraw for no reason.
@@ -53,7 +97,7 @@ export function PortfolioLive({
       <PortfolioChart
         series={series}
         ranges={ranges}
-        owners={owners}
+        owners={liveOwners}
         defaultRange={defaultRange}
         live={live}
       />
