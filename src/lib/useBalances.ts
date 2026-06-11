@@ -3,12 +3,6 @@
 import { useEffect, useState } from "react";
 import type { LiveBalances } from "@/lib/balances";
 
-interface UseBalancesResult {
-  data: LiveBalances;
-  stale: boolean;
-  elapsedSec: number;
-}
-
 function pick<T>(next: T | null | undefined, prev: T | null | undefined): T | null {
   if (next !== null && next !== undefined) return next;
   if (prev !== null && prev !== undefined) return prev;
@@ -75,52 +69,38 @@ function mergeBalances(prev: LiveBalances, next: LiveBalances): LiveBalances {
   };
 }
 
-const STALE_AFTER_FAILS = 2;
-
+// Polls /api/balances and merges each response over the previous one, so a
+// leg that fails upstream keeps showing its last good value. `refreshNow`
+// fires one immediate fetch on mount — used when the server-rendered data
+// arrived incomplete, so recovery doesn't wait a full poll interval.
 export function usePolledBalances(
   initial: LiveBalances,
   pollMs = 10_000,
-): UseBalancesResult {
+  refreshNow = false,
+): LiveBalances {
   const [data, setData] = useState<LiveBalances>(initial);
-  const [stale, setStale] = useState(false);
-  const [, setTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    let failCount = 0;
 
     const refresh = async () => {
       try {
         const res = await fetch("/api/balances", { cache: "no-store" });
-        if (!res.ok) {
-          failCount += 1;
-          if (!cancelled && failCount >= STALE_AFTER_FAILS) setStale(true);
-          return;
-        }
+        if (!res.ok) return;
         const next = (await res.json()) as LiveBalances;
-        if (!cancelled) {
-          setData((prev) => mergeBalances(prev, next));
-          failCount = 0;
-          setStale(false);
-        }
+        if (!cancelled) setData((prev) => mergeBalances(prev, next));
       } catch {
-        failCount += 1;
-        if (!cancelled && failCount >= STALE_AFTER_FAILS) setStale(true);
+        // Transient network failure — keep showing the last merged data.
       }
     };
 
+    if (refreshNow) refresh();
     const pollId = setInterval(refresh, pollMs);
-    const tickId = setInterval(() => setTick((t) => t + 1), 1000);
     return () => {
       cancelled = true;
       clearInterval(pollId);
-      clearInterval(tickId);
     };
-  }, [pollMs]);
+  }, [pollMs, refreshNow]);
 
-  const elapsedSec = Math.max(
-    0,
-    Math.floor((Date.now() - data.fetchedAt) / 1000),
-  );
-  return { data, stale, elapsedSec };
+  return data;
 }

@@ -34,10 +34,26 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const totalNok = liveTotalNok(balances);
+  // Never persist an incomplete reading: a partial total (e.g. the Phantom
+  // leg alone because Polymarket was rate-limited) would write a fake equity
+  // crash into permanent history. Skipping the hour is safe — the chart
+  // carries the last known value across cron gaps by design.
+  if (totalNok == null) {
+    return Response.json(
+      {
+        ok: false,
+        stage: "incomplete",
+        error: "balance legs missing; snapshot skipped",
+      },
+      { status: 503 },
+    );
+  }
+
   const row = {
     captured_at: new Date(balances.fetchedAt).toISOString(),
     hour_bucket: hourBucket(balances.fetchedAt),
-    total_nok: liveTotalNok(balances),
+    total_nok: totalNok,
     pnl_nok: livePnlNok(balances),
     cash_nok: n(balances.cash.totalNok),
     polymarket_bets_nok: n(balances.polymarketBets.valueNok),

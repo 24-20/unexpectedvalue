@@ -146,7 +146,7 @@ function parseTotal(v: unknown): number | null {
 
 async function loadMetricSeries(
   column: Column,
-  liveValue: number | null,
+  livePromise: Promise<number | null>,
   now: number,
   earliest: string,
 ): Promise<SeriesByRange> {
@@ -211,6 +211,10 @@ async function loadMetricSeries(
     }
   }
 
+  // Awaited after the snapshot queries so the (slow) live-balance fetch and
+  // the Supabase reads overlap instead of running back to back.
+  const liveValue = await livePromise;
+
   const out = {} as SeriesByRange;
   for (const r of RANGES)
     out[r.key] = buildSeries(
@@ -224,15 +228,27 @@ async function loadMetricSeries(
   return out;
 }
 
-export async function getPortfolioSeries(live: {
-  equityNok: number | null;
-  pnlNok: number | null;
-}): Promise<SeriesByMetric> {
+export async function getPortfolioSeries(
+  live:
+    | { equityNok: number | null; pnlNok: number | null }
+    | Promise<{ equityNok: number | null; pnlNok: number | null }>,
+): Promise<SeriesByMetric> {
   const now = Date.now();
   const earliest = new Date(now - RANGE_DAYS["1M"] * DAY_MS).toISOString();
+  const livePromise = Promise.resolve(live);
   const [equity, pnl] = await Promise.all([
-    loadMetricSeries("total_nok", live.equityNok, now, earliest),
-    loadMetricSeries("pnl_nok", live.pnlNok, now, earliest),
+    loadMetricSeries(
+      "total_nok",
+      livePromise.then((l) => l.equityNok),
+      now,
+      earliest,
+    ),
+    loadMetricSeries(
+      "pnl_nok",
+      livePromise.then((l) => l.pnlNok),
+      now,
+      earliest,
+    ),
   ]);
   return { equity, pnl };
 }

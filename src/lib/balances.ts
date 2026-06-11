@@ -14,10 +14,19 @@ const POLYGON_RPC =
   process.env.POLYGON_RPC_URL ?? "https://polygon-bor-rpc.publicnode.com";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
-const REVALIDATE_BALANCES = 10;
+// Floor on data freshness for everything balance-shaped. 5s keeps the
+// origin fan-out at ~12/min per endpoint server-wide (well inside Polymarket
+// / publicnode / mainnet-beta tolerances) while feeding the live ticker;
+// don't go much lower — upstreams cache on their side anyway, so faster
+// revalidation would add 429 risk without fresher numbers.
+const REVALIDATE_BALANCES = 5;
 const REVALIDATE_RATES = 60;
 const REVALIDATE_BRIDGE_ADDRESSES = 3600;
-const FETCH_TIMEOUT_MS = 4000;
+// Polymarket's data-api sits behind Cloudflare and regularly needs >4s when
+// cold or shedding load. With the data cache serving stale-while-revalidate,
+// the timeout is normally paid by a background refresh rather than the
+// request holding the page — generous beats flaky.
+const FETCH_TIMEOUT_MS = 8000;
 const FETCH_RETRIES = 1;
 
 const SPL_TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
@@ -261,15 +270,19 @@ interface BridgeAddresses {
 // Polymarket's Bridge API returns per-user deposit relay addresses. Funds
 // sent there from supported chains are auto-converted to USDC and forwarded
 // to the proxy — so the cash count must include any in-flight balance there.
+// Returns null only on a hard failure (timeout / 5xx exhausted): then the
+// set of relay addresses is unknown, which is different from a 4xx-style
+// "no relay provisioned" answer that legitimately maps to {null, null}.
 async function fetchPolymarketBridgeAddresses(
   wallet: string,
-): Promise<BridgeAddresses> {
+): Promise<BridgeAddresses | null> {
   const res = await safeFetch(POLYMARKET_BRIDGE_API, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ address: wallet }),
     next: { revalidate: REVALIDATE_BRIDGE_ADDRESSES },
   });
+  if (res == null) return null;
   const data = await safeJson<{
     address?: { evm?: string; svm?: string };
   }>(res);
@@ -280,16 +293,23 @@ async function fetchPolymarketBridgeAddresses(
 }
 
 async function fetchPolymarketCashUsdc(): Promise<number | null> {
-  const bridges = await fetchPolymarketBridgeAddresses(POLYMARKET_ADDRESS);
-  const [proxy, evmBridge, svmBridge] = await Promise.all([
+  // The proxy balance doesn't depend on bridge discovery — run them in
+  // parallel instead of paying the two round-trips back to back.
+  const [proxy, bridges] = await Promise.all([
     fetchOwnerUsdc(POLYMARKET_ADDRESS),
+    fetchPolymarketBridgeAddresses(POLYMARKET_ADDRESS),
+  ]);
+  if (proxy == null) return null;
+  // Bridge lookup failed outright: in-flight deposits are unknowable, and
+  // counting only the proxy could undercount. Unknown beats wrong.
+  if (bridges == null) return null;
+  const [evmBridge, svmBridge] = await Promise.all([
     bridges.evm ? fetchOwnerUsdc(bridges.evm) : Promise.resolve(null),
     bridges.svm ? fetchSolanaUsdc(bridges.svm) : Promise.resolve(null),
   ]);
   // A bridge leg is only legitimately absent when there is no relay address;
   // if a relay exists but its read failed, the total is unknowable — return
   // null rather than silently undercounting in-flight deposits.
-  if (proxy == null) return null;
   if (bridges.evm && evmBridge == null) return null;
   if (bridges.svm && svmBridge == null) return null;
   return proxy + (evmBridge ?? 0) + (svmBridge ?? 0);
@@ -663,16 +683,37 @@ function sumOrNull(parts: Array<number | null>): number | null {
   return filtered.length > 0 ? filtered.reduce((s, v) => s + v, 0) : null;
 }
 
+// Last good reading per leg, held in module memory. When an upstream
+// transiently fails (rate limit, timeout), the previous reading is served
+// instead of null so SSR renders and pollers don't flicker to partial data —
+// the same merge the client does in useBalances, but it also covers the very
+// first paint. Bounded age so a long outage degrades to honest nulls rather
+// than frozen numbers; serverless cold starts simply begin empty.
+const LAST_GOOD_MAX_AGE_MS = 15 * 60_000;
+const lastGood = new Map<string, { value: unknown; at: number }>();
+
+function remember<T>(key: string, value: T | null): T | null {
+  if (value != null) {
+    lastGood.set(key, { value, at: Date.now() });
+    return value;
+  }
+  const prev = lastGood.get(key);
+  if (prev && Date.now() - prev.at <= LAST_GOOD_MAX_AGE_MS) {
+    return prev.value as T;
+  }
+  return null;
+}
+
 export async function getLiveBalances(): Promise<LiveBalances> {
   const [
-    polyBetsUsd,
-    polyCashUsdc,
-    polyPositions,
-    polyActivity,
-    customBets,
-    sol,
-    stables,
-    rates,
+    polyBetsUsdRaw,
+    polyCashUsdcRaw,
+    polyPositionsRaw,
+    polyActivityRaw,
+    customBetsRaw,
+    solRaw,
+    stablesRaw,
+    ratesRaw,
   ] = await Promise.all([
     fetchPolymarketBetsUsd(),
     fetchPolymarketCashUsdc(),
@@ -683,6 +724,20 @@ export async function getLiveBalances(): Promise<LiveBalances> {
     fetchStableUsd(),
     fetchRates(),
   ]);
+
+  const polyBetsUsd = remember("polyBetsUsd", polyBetsUsdRaw);
+  const polyCashUsdc = remember("polyCashUsdc", polyCashUsdcRaw);
+  const polyPositions = remember("polyPositions", polyPositionsRaw);
+  const polyActivity = remember("polyActivity", polyActivityRaw);
+  const customBets = remember("customBets", customBetsRaw);
+  const sol = remember("sol", solRaw);
+  const stables =
+    remember("stables", stablesRaw.usd != null ? stablesRaw : null) ??
+    stablesRaw;
+  const rates = {
+    solUsd: remember("solUsd", ratesRaw.solUsd),
+    usdNok: remember("usdNok", ratesRaw.usdNok),
+  };
 
   // Merge Polymarket + custom bets
   const positions: PolymarketPosition[] | null =
@@ -695,7 +750,13 @@ export async function getLiveBalances(): Promise<LiveBalances> {
       : [...(polyActivity ?? []), ...(customBets?.activity ?? [])].sort(
           (a, b) => b.timestamp - a.timestamp,
         );
-  const totalBetsUsd = sumOrNull([polyBetsUsd, customBets?.pendingStakeUsd ?? null]);
+  // Strict: pending custom stakes are part of the bets value, so a failed
+  // custom-bets read makes the total unknowable — same all-or-nothing rule
+  // as the wallet legs.
+  const totalBetsUsd =
+    polyBetsUsd != null && customBets != null
+      ? polyBetsUsd + customBets.pendingStakeUsd
+      : null;
 
   const { usdNok, solUsd } = rates;
 
@@ -749,49 +810,6 @@ export async function getLiveBalances(): Promise<LiveBalances> {
   };
 }
 
-export function liveTotalNok(b: LiveBalances): number | null {
-  const cash = b.cash.totalNok;
-  const bets = b.polymarketBets.valueNok;
-  if (cash == null && bets == null) return null;
-  return (cash ?? 0) + (bets ?? 0);
-}
-
-// Lifetime betting PnL in NOK. Computed as
-//   −buys + sells + redeems + rewards + currentValue(open positions) + customRealized
-// across Polymarket. The activity walk picks up history that has dropped off
-// the /positions API (redeemed winners stop appearing once you claim), while
-// the currentValue sum picks up MTM of positions still on the book. Custom
-// bets stay summed as realized — pending custom bets have no live odds, so
-// no MTM. Returns null if the FX rate is missing or we couldn't load any
-// bet data.
-export function livePnlNok(b: LiveBalances): number | null {
-  const { usdNok } = b.rates;
-  if (usdNok == null) return null;
-
-  let pnlUsd = 0;
-  let hasData = false;
-
-  if (b.polymarketBets.activity != null) {
-    for (const a of b.polymarketBets.activity) {
-      if (a.source !== "polymarket") continue;
-      if (a.type === "TRADE" && a.side === "BUY") pnlUsd -= a.usdcSize;
-      else if (a.type === "TRADE" && a.side === "SELL") pnlUsd += a.usdcSize;
-      else if (a.type === "REDEEM" || a.type === "REWARD") pnlUsd += a.usdcSize;
-    }
-    hasData = true;
-  }
-  if (b.polymarketBets.positions != null) {
-    for (const p of b.polymarketBets.positions) {
-      if (p.source !== "polymarket") continue;
-      pnlUsd += p.currentValue ?? 0;
-    }
-    hasData = true;
-  }
-  if (b.customBetsRealizedPnlUsd != null) {
-    pnlUsd += b.customBetsRealizedPnlUsd;
-    hasData = true;
-  }
-
-  if (!hasData) return null;
-  return pnlUsd * usdNok;
-}
+// Strict equity/PnL math lives in @/lib/equity (shared with the client for
+// live chart updates); re-exported here so server callers keep one import.
+export { liveTotalNok, livePnlNok } from "@/lib/equity";

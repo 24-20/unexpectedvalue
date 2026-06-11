@@ -11,12 +11,11 @@ import type {
   LiveBalances,
   PolymarketPosition,
 } from "@/lib/balances";
-import { usePolledBalances } from "@/lib/useBalances";
 import { betHref } from "@/lib/betId";
 
 interface PolymarketBetsProps {
-  initial: LiveBalances;
-  pollMs?: number;
+  // Live-merged balances, polled once for the whole page by PortfolioLive.
+  data: LiveBalances;
 }
 
 type Tab = "active" | "history";
@@ -34,11 +33,7 @@ const HISTORY_SORT_OPTIONS: { value: HistorySortMode; label: string }[] = [
   { value: "biggest_loss", label: "Biggest loss" },
 ];
 
-export function PolymarketBets({
-  initial,
-  pollMs = 10_000,
-}: PolymarketBetsProps) {
-  const { data } = usePolledBalances(initial, pollMs);
+export function PolymarketBets({ data }: PolymarketBetsProps) {
   const [tab, setTab] = useState<Tab>("active");
   const [sort, setSort] = useState<SortMode>("recent");
   const [historySort, setHistorySort] = useState<HistorySortMode>("recent");

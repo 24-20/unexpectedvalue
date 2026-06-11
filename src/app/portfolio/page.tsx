@@ -1,10 +1,6 @@
 import { Suspense } from "react";
 import { Container, Mono } from "@/components/ui";
-import {
-  Holdings,
-  PolymarketBets,
-  PortfolioChart,
-} from "@/components/blocks";
+import { PortfolioLive } from "@/components/blocks";
 import { RANGES, getPortfolioSeries } from "@/lib/portfolio";
 import { getLiveBalances, livePnlNok, liveTotalNok } from "@/lib/balances";
 import { getInvestors } from "@/lib/investors";
@@ -18,32 +14,29 @@ export default function PortfolioPage() {
 }
 
 async function PortfolioBody() {
-  const [balances, investors] = await Promise.all([
-    getLiveBalances(),
+  // One balances fetch shared by the live blocks and the chart's live point;
+  // investors and the snapshot-history queries overlap with it rather than
+  // waiting for the (potentially slow) chain fetches to finish.
+  const balancesPromise = getLiveBalances();
+  const [balances, investors, series] = await Promise.all([
+    balancesPromise,
     getInvestors(),
+    getPortfolioSeries(
+      balancesPromise.then((b) => ({
+        equityNok: liveTotalNok(b),
+        pnlNok: livePnlNok(b),
+      })),
+    ),
   ]);
-  const series = await getPortfolioSeries({
-    equityNok: liveTotalNok(balances),
-    pnlNok: livePnlNok(balances),
-  });
 
   return (
-    <div>
-      <PortfolioChart
-        series={series}
-        ranges={RANGES}
-        owners={investors}
-        defaultRange="1D"
-      />
-
-      <div className="pt-4 sm:pt-6 md:pt-8 pb-4 sm:pb-6 md:pb-8 relative z-[70] bg-background">
-        <Container className="px-3 sm:px-6">
-          <Holdings initial={balances} />
-        </Container>
-      </div>
-
-      <PolymarketBets initial={balances} />
-    </div>
+    <PortfolioLive
+      initial={balances}
+      series={series}
+      ranges={RANGES}
+      owners={investors}
+      defaultRange="1D"
+    />
   );
 }
 

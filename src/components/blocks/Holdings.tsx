@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { formatNOK } from "@/lib/format";
 import type { LiveBalances } from "@/lib/balances";
-import { usePolledBalances } from "@/lib/useBalances";
 import { ShieldCheckIcon } from "@/components/icons";
 
 interface HoldingsProps {
-  initial: LiveBalances;
-  pollMs?: number;
+  // Live-merged balances, polled once for the whole page by PortfolioLive.
+  data: LiveBalances;
 }
 
 const SIZE = 80;
@@ -36,9 +35,7 @@ function donutSlice(r: number, ri: number, a0: number, a1: number) {
   ].join(" ");
 }
 
-export function Holdings({ initial, pollMs = 10_000 }: HoldingsProps) {
-  const { data } = usePolledBalances(initial, pollMs);
-
+export function Holdings({ data }: HoldingsProps) {
   const cash = data.cash.totalNok ?? 0;
   const bets = data.polymarketBets.valueNok ?? 0;
   const total = cash + bets;

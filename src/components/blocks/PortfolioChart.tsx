@@ -17,6 +17,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
+import NumberFlow from "@number-flow/react";
 import { cn } from "@/lib/cn";
 import {
   formatDateTime,
@@ -24,7 +25,12 @@ import {
   formatNOKDelta,
   formatPct,
 } from "@/lib/format";
-import type { Range, SeriesByMetric } from "@/lib/portfolio";
+import type {
+  PortfolioSeries,
+  Range,
+  SeriesByMetric,
+  SeriesByRange,
+} from "@/lib/portfolio";
 import type { Owner } from "@/lib/owners";
 import { Mono } from "@/components/ui";
 
@@ -35,11 +41,49 @@ const VIEW_MODES: { key: ViewMode; label: string }[] = [
   { key: "relative", label: "Relative equity" },
 ];
 
+// Freshest client-side reading, polled from /api/balances. Null values mean
+// "currently unknown" and leave the server-rendered series untouched.
+export interface LiveEquityPoint {
+  t: number;
+  equityNok: number | null;
+  pnlNok: number | null;
+}
+
 interface PortfolioChartProps {
   series: SeriesByMetric;
   ranges: { key: Range; label: string }[];
   owners: ReadonlyArray<Owner>;
   defaultRange?: Range;
+  live?: LiveEquityPoint;
+}
+
+// Replace/append the live tail of a server-built series with a fresher
+// client-side reading, recomputing the derived stats the same way the
+// server does. Always applied to the pristine series prop, so repeated
+// polls never accumulate extra points.
+function withLivePoint(
+  s: PortfolioSeries,
+  t: number,
+  v: number | null,
+): PortfolioSeries {
+  if (v == null) return s;
+  const points = [...s.points];
+  const last = points[points.length - 1];
+  // Compare at whole-second granularity: the chart plots floor(t/1000)
+  // timestamps and asserts they are strictly ascending, so a reading that
+  // lands in the same second as the series tail (typical for the very first
+  // client render) must replace the tail, not extend it.
+  if (last && Math.floor(t / 1000) <= Math.floor(last.t / 1000)) {
+    points[points.length - 1] = { t: last.t, v };
+  } else {
+    points.push({ t, v });
+  }
+  const startValue = points.find((p) => p.v !== 0)?.v ?? points[0]?.v ?? 0;
+  const endValue = points[points.length - 1]?.v ?? 0;
+  const changeAbs = endValue - startValue;
+  const changePct =
+    startValue !== 0 ? (changeAbs / Math.abs(startValue)) * 100 : 0;
+  return { ...s, points, startValue, endValue, changeAbs, changePct };
 }
 
 interface HoverState {
@@ -106,6 +150,7 @@ export function PortfolioChart({
   ranges,
   owners,
   defaultRange = "1M",
+  live,
 }: PortfolioChartProps) {
   const [range, setRange] = useState<Range>(defaultRange);
   const [viewMode, setViewModeState] = useState<ViewMode>("total");
@@ -157,14 +202,28 @@ export function PortfolioChart({
     rangeRef.current = range;
   }, [range]);
 
-  const active = series.equity[range];
-  const activePnl = series.pnl[range];
+  // Server-rendered series with the freshest polled reading spliced onto the
+  // tail — this is what lets a load that rendered while an upstream was
+  // failing heal in place instead of staying wrong until a full reload.
+  const liveSeries = useMemo<SeriesByMetric>(() => {
+    if (!live) return series;
+    const equity = {} as SeriesByRange;
+    const pnl = {} as SeriesByRange;
+    for (const key of Object.keys(series.equity) as Range[]) {
+      equity[key] = withLivePoint(series.equity[key], live.t, live.equityNok);
+      pnl[key] = withLivePoint(series.pnl[key], live.t, live.pnlNok);
+    }
+    return { equity, pnl };
+  }, [series, live]);
+
+  const active = liveSeries.equity[range];
+  const activePnl = liveSeries.pnl[range];
   const base = active.startValue;
   // Current equity (= end of "1D" series, which is "now" for every range) is
   // our denominator when expressing PnL deltas as a percent. Far more stable
   // than the range's starting value — that goes to zero pre-deposit and makes
   // every percent blow up to infinity.
-  const currentEquity = series.equity["1D"].endValue;
+  const currentEquity = liveSeries.equity["1D"].endValue;
   // In Relative mode we scale every displayed NOK value by the selected
   // owner's share. The percent stays the same since both numerator and
   // denominator scale by the same factor.
@@ -411,7 +470,17 @@ export function PortfolioChart({
               <div className="min-w-0">
                 <Mono className="text-muted">{headerLabel}</Mono>
                 <div className="mt-2 text-4xl md:text-5xl font-medium tabular-nums tracking-tight">
-                  {formatNOK(display.value)}
+                  {/* Same formatting as formatNOK (en-US grouping, rounded,
+                      " kr"), but with per-digit roll animation on live ticks.
+                      While the user scrubs the chart the value snaps instead
+                      of spinning through every hovered point. */}
+                  <NumberFlow
+                    value={Math.round(display.value)}
+                    locales="en-US"
+                    format={{ maximumFractionDigits: 0 }}
+                    suffix=" kr"
+                    animated={!hover}
+                  />
                 </div>
                 <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
                   <span className="text-muted">
@@ -454,7 +523,7 @@ export function PortfolioChart({
               // The per-range label is always the relative PnL return for
               // that range, regardless of which line is on screen — same
               // semantics as the headline percent.
-              const pnlForRange = series.pnl[r.key].changeAbs;
+              const pnlForRange = liveSeries.pnl[r.key].changeAbs;
               const pct =
                 currentEquity > 0 ? (pnlForRange / currentEquity) * 100 : 0;
               const up = pnlForRange >= 0;
