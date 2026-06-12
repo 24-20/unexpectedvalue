@@ -54,8 +54,6 @@ const VIEW_MODES: { key: ViewMode; label: string }[] = [
 const WC_END_MS = Date.UTC(2026, 6, 19);
 const WC_END_LABEL = "Jul 19";
 const TARGET_MULTIPLIERS = [2, 3, 4];
-// Pseudo-range backing the WC views' footer: replaces the "1M" button there.
-const WC_RANGE: { key: Range; label: string } = { key: "VM", label: "WC end" };
 const DAY_MS = 86_400_000;
 
 function isWcView(mode: ViewMode): boolean {
@@ -735,11 +733,7 @@ export function PortfolioChart({
           )
         : targetMult * totalDepositsNok
       : null;
-  // WC views swap the "1M" button for the kickoff → WC-end window.
-  const displayRanges = isWc
-    ? [...ranges.filter((r) => r.key !== "1M"), WC_RANGE]
-    : ranges;
-  const rangeLabel = displayRanges.find((r) => r.key === range)?.label ?? "";
+  const rangeLabel = ranges.find((r) => r.key === range)?.label ?? "";
   const headerLabel =
     viewMode === "target"
       ? "Money vs target"
@@ -858,8 +852,12 @@ export function PortfolioChart({
                   projectedEndMoney != null &&
                   projDailyPct != null && (
                     <div className="mt-1 font-mono text-xs text-muted tabular-nums">
-                      pace {formatPct(projDailyPct)}/day → est. {WC_END_LABEL}:{" "}
-                      {formatNOK(projectedEndMoney)} (
+                      <span
+                        className={projDailyPct >= 0 ? "text-up" : "text-down"}
+                      >
+                        pace {formatPct(projDailyPct)}/day
+                      </span>{" "}
+                      → est. {WC_END_LABEL}: {formatNOK(projectedEndMoney)} (
                       {(projectedEndMoney / totalDepositsNok).toFixed(2)}x)
                     </div>
                   )}
@@ -892,7 +890,12 @@ export function PortfolioChart({
 
           <div
             ref={containerRef}
-            className="relative h-[300px] md:h-[420px] w-full touch-none px-3 sm:px-6"
+            className={cn(
+              "relative h-[300px] md:h-[420px] w-full touch-none px-3 sm:px-6",
+              // Without the timeframe footer the time axis would sit flush
+              // against the card edge.
+              isWc && "mb-3 md:mb-4",
+            )}
           >
             {/* "You are here" marker for the WC views; positioned by
                 updateDot, hidden whenever the reference line is empty. */}
@@ -913,8 +916,11 @@ export function PortfolioChart({
             </div>
           </div>
 
+          {/* The WC views are pinned to the kickoff → WC-end window, so
+              they get no timeframe picker at all. */}
+          {!isWc && (
           <div className="p-3 md:p-4 flex flex-wrap gap-2">
-            {displayRanges.map((r) => {
+            {ranges.map((r) => {
               const isActive = r.key === range;
               // The per-range label is always the relative PnL return for
               // that range, regardless of which line is on screen — same
@@ -950,6 +956,7 @@ export function PortfolioChart({
               );
             })}
           </div>
+          )}
         </div>
       </div>
     </div>

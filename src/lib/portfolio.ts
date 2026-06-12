@@ -2,8 +2,8 @@ import "server-only";
 import { getSupabaseAdmin } from "@/lib/supabase";
 
 // "VM" = World Cup window (kickoff → now) at daily resolution. It backs the
-// WC views in the chart and is not part of RANGES (the default footer
-// buttons); the chart swaps it in for the "1M" button in those views.
+// WC views in the chart and is not part of RANGES (the footer buttons);
+// the WC views are pinned to it and show no timeframe picker.
 export type Range = "1D" | "1U" | "1M" | "VM";
 export type Metric = "equity" | "pnl";
 
