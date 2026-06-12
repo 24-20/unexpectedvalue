@@ -740,16 +740,39 @@ export function PortfolioChart({
     ? [...ranges.filter((r) => r.key !== "1M"), WC_RANGE]
     : ranges;
   const rangeLabel = displayRanges.find((r) => r.key === range)?.label ?? "";
-  const headerLabel = isWc
-    ? "Money"
-    : selectedOwner
-      ? `${selectedOwner.name}'s equity`
-      : "Equity";
+  const headerLabel =
+    viewMode === "target"
+      ? "Money vs target"
+      : viewMode === "projection"
+        ? "Money & projection"
+        : selectedOwner
+          ? `${selectedOwner.name}'s equity`
+          : "Equity";
   // Where the projection lands at WC end, in money; null while the line
   // isn't drawn (short range or no baseline yet).
   const projectedEndMoney =
     viewMode === "projection" && wcPotStart > 0 && refLineData.length > 1
       ? wcPotStart + refLineData[refLineData.length - 1].value
+      : null;
+  // Daily compounding rates surfaced in the labels: the average daily PnL
+  // the projection extrapolates with, and the daily PnL the target needs.
+  const wcDaysElapsed = Math.max(
+    1,
+    ((lastCurvePoint?.t ?? wcStartT) - wcStartT) / DAY_MS,
+  );
+  const wcPotNow = wcPotStart + lastCurveValue;
+  const projDailyPct =
+    viewMode === "projection" && wcPotStart > 0 && wcPotNow > 0
+      ? (Math.pow(wcPotNow / wcPotStart, 1 / wcDaysElapsed) - 1) * 100
+      : null;
+  const targetDailyPct =
+    targetMoney != null
+      ? (Math.pow(
+          (targetMult * totalDepositsNok) / wcPotStart,
+          DAY_MS / wcHorizon,
+        ) -
+          1) *
+        100
       : null;
   // PnL deltas drive the headline kr + percent. Scale the NOK amount by the
   // selected owner's share, but the percent is a ratio so it cancels out.
@@ -793,7 +816,7 @@ export function PortfolioChart({
                 {targetMoney != null && (
                   <div className="mt-1 flex items-baseline gap-2 font-mono tabular-nums text-muted">
                     <span className="text-[10px] uppercase tracking-widest">
-                      target {targetMult}x
+                      target {targetMult}x by {WC_END_LABEL}
                     </span>
                     <span className="text-xl md:text-2xl">
                       <NumberFlow
@@ -817,12 +840,20 @@ export function PortfolioChart({
                     <span className={deltaTone}>{formatPct(pnlPct)}</span>
                   </div>
                 </div>
-                {viewMode === "projection" && projectedEndMoney != null && (
+                {viewMode === "target" && targetDailyPct != null && (
                   <div className="mt-1 font-mono text-xs text-muted tabular-nums">
-                    est. {WC_END_LABEL} ≈ {formatNOK(projectedEndMoney)} (
-                    {(projectedEndMoney / totalDepositsNok).toFixed(2)}x)
+                    needs {formatPct(targetDailyPct)}/day to hit {targetMult}x
                   </div>
                 )}
+                {viewMode === "projection" &&
+                  projectedEndMoney != null &&
+                  projDailyPct != null && (
+                    <div className="mt-1 font-mono text-xs text-muted tabular-nums">
+                      pace {formatPct(projDailyPct)}/day → est. {WC_END_LABEL}:{" "}
+                      {formatNOK(projectedEndMoney)} (
+                      {(projectedEndMoney / totalDepositsNok).toFixed(2)}x)
+                    </div>
+                  )}
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <ViewModeDropdown
