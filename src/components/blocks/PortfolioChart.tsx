@@ -678,6 +678,11 @@ export function PortfolioChart({
 
   useEffect(() => {
     if (!seriesRef.current || !refLineRef.current) return;
+    // A crosshair pinned by the touch handler outlives the data it snapped
+    // to; replacing the series under it (e.g. leaving the WC views drops
+    // every future stamp) makes lightweight-charts throw while re-rendering
+    // it and takes the page down. Unpin before swapping.
+    chartRef.current?.clearCrosshairPosition();
     seriesRef.current.setData(chartData);
     refLineRef.current.setData(refLineData);
     chartRef.current?.timeScale().fitContent();
