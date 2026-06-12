@@ -20,7 +20,11 @@ interface PolymarketBetsProps {
 
 type Tab = "active" | "history";
 type SortMode = "recent" | "amount";
-type HistorySortMode = "recent" | "biggest_win" | "biggest_loss";
+type HistorySortMode =
+  | "recent"
+  | "biggest_win"
+  | "biggest_loss"
+  | "biggest_multiplier";
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: "recent", label: "Most recent" },
@@ -31,6 +35,7 @@ const HISTORY_SORT_OPTIONS: { value: HistorySortMode; label: string }[] = [
   { value: "recent", label: "Most recent" },
   { value: "biggest_win", label: "Biggest win" },
   { value: "biggest_loss", label: "Biggest loss" },
+  { value: "biggest_multiplier", label: "Biggest multiplier" },
 ];
 
 export function PolymarketBets({ data }: PolymarketBetsProps) {
@@ -88,6 +93,13 @@ export function PolymarketBets({ data }: PolymarketBetsProps) {
       sorted.sort((a, b) => (b.pnlUsd ?? 0) - (a.pnlUsd ?? 0));
     } else if (historySort === "biggest_loss") {
       sorted.sort((a, b) => (a.pnlUsd ?? 0) - (b.pnlUsd ?? 0));
+    } else if (historySort === "biggest_multiplier") {
+      // Biggest realized multiple on the money first — a 10¢→$1 redeem
+      // (10x) tops a 60¢→90¢ sell (1.5x) regardless of size. Events with
+      // no realized result sink below every settled one.
+      sorted.sort(
+        (a, b) => (realizedMultiple(b) ?? -1) - (realizedMultiple(a) ?? -1),
+      );
     } else {
       sorted.sort((a, b) => b.timestamp - a.timestamp);
     }
@@ -433,6 +445,7 @@ function ActivityRow({
   const amountNok = usdNok != null ? Math.abs(event.usdcSize) * usdNok : null;
   const pnlNok =
     event.pnlUsd != null && usdNok != null ? event.pnlUsd * usdNok : null;
+  const multiple = realizedMultiple(event);
   const action = describeAction(event);
   const href =
     event.slug && event.outcome ? betHref(event.slug, event.outcome) : null;
@@ -511,6 +524,11 @@ function ActivityRow({
           )}
         >
           <div>{formatNOKDelta(pnlNok)}</div>
+          {multiple != null && (
+            <div className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted mt-0.5">
+              {formatMultiple(multiple)}
+            </div>
+          )}
           {event.soldPct != null && (
             <div className="font-mono text-[10px] md:text-xs uppercase tracking-widest text-muted mt-0.5">
               sold {formatSoldPct(event.soldPct)}
@@ -658,9 +676,24 @@ function formatShares(n: number): string {
 
 function formatMultiplier(price: number | null | undefined): string | null {
   if (price == null || !Number.isFinite(price) || price <= 0) return null;
-  const mult = 1 / price;
-  const rounded = Math.round(mult * 100) / 100;
-  return `${rounded}x`;
+  return formatMultiple(1 / price);
+}
+
+function formatMultiple(mult: number): string {
+  return `${Math.round(mult * 100) / 100}x`;
+}
+
+// Realized multiple on the money: proceeds / cost basis, with the basis
+// recovered as proceeds − pnl (how every pnlUsd in balances.ts and
+// customBets.ts is derived). Redeems and winning sells land above 1x, voids
+// at ~1x, partial dumps below, lost bets at 0x. Null when the event has no
+// realized PnL (buys, deposits, rewards, tainted basis).
+function realizedMultiple(e: ActivityEvent): number | null {
+  if (e.pnlUsd == null) return null;
+  const proceeds = Math.abs(e.usdcSize);
+  const basis = proceeds - e.pnlUsd;
+  if (!Number.isFinite(basis) || basis <= 0) return null;
+  return proceeds / basis;
 }
 
 function formatPortfolioShare(
