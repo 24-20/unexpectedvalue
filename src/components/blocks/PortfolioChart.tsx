@@ -705,17 +705,30 @@ export function PortfolioChart({
     : active.endValue * ownerScale;
   const displayT = hover?.t ?? lastCurvePoint?.t ?? 0;
   // A null hover value means the cursor is past the curve's end. The target
-  // view freezes the real number there; the projection view shows the
-  // projected PnL × money instead, read off the line.
+  // view blanks the real number there ("—", only the benchmark tracks); the
+  // projection view shows the projected PnL × money instead, read off the
+  // line.
   const hoverProjectedPnl =
     viewMode === "projection" && hover && hover.value == null
       ? refLookup.get(Math.floor(hover.t / 1000)) ?? null
       : null;
+  const targetFutureHover =
+    viewMode === "target" && hover != null && hover.value == null;
   const displayCurveValue =
     hover?.value ?? hoverProjectedPnl ?? lastCurveValue;
-  const headlineValue = isWc
-    ? wcPotStart + displayCurveValue
-    : displayCurveValue;
+  // Where the projection lands at WC end, in money; null while the line
+  // isn't drawn (no baseline yet). Doubles as the projection view's resting
+  // headline — the estimate is the view's whole point, so it leads.
+  const projectedEndMoney =
+    viewMode === "projection" && wcPotStart > 0 && refLineData.length > 1
+      ? wcPotStart + refLineData[refLineData.length - 1].value
+      : null;
+  const headlineValue =
+    viewMode === "projection" && !hover && projectedEndMoney != null
+      ? projectedEndMoney
+      : isWc
+        ? wcPotStart + displayCurveValue
+        : displayCurveValue;
   // The target view's second number. Default: the pot if the target is hit
   // (targetMult × deposits). While hovering: where the compounding path
   // says the pot should be at the hovered moment.
@@ -742,12 +755,6 @@ export function PortfolioChart({
         : selectedOwner
           ? `${selectedOwner.name}'s equity`
           : "Equity";
-  // Where the projection lands at WC end, in money; null while the line
-  // isn't drawn (short range or no baseline yet).
-  const projectedEndMoney =
-    viewMode === "projection" && wcPotStart > 0 && refLineData.length > 1
-      ? wcPotStart + refLineData[refLineData.length - 1].value
-      : null;
   // Daily compounding rates surfaced in the labels: the average daily PnL
   // the projection extrapolates with, and the daily PnL the target needs.
   const wcDaysElapsed = Math.max(
@@ -798,14 +805,20 @@ export function PortfolioChart({
                   {/* Same formatting as formatNOK (en-US grouping, rounded,
                       " kr"), but with per-digit roll animation on live ticks.
                       While the user scrubs the chart the value snaps instead
-                      of spinning through every hovered point. */}
-                  <NumberFlow
-                    value={Math.round(headlineValue)}
-                    locales="en-US"
-                    format={{ maximumFractionDigits: 0 }}
-                    suffix=" kr"
-                    animated={!hover}
-                  />
+                      of spinning through every hovered point. Scrubbing the
+                      future in target view has no real reading — show a dash
+                      rather than a frozen stale value. */}
+                  {targetFutureHover ? (
+                    "—"
+                  ) : (
+                    <NumberFlow
+                      value={Math.round(headlineValue)}
+                      locales="en-US"
+                      format={{ maximumFractionDigits: 0 }}
+                      suffix=" kr"
+                      animated={!hover}
+                    />
+                  )}
                 </div>
                 {targetMoney != null && (
                   <div className="mt-1 flex items-baseline gap-2 font-mono tabular-nums text-muted">
