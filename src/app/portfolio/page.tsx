@@ -29,12 +29,21 @@ async function PortfolioBody() {
     ),
   ]);
 
+  // Aggregate only: per-investor invested amounts stay server-side (the
+  // /api/investors route strips them for the same reason). The sum is the
+  // 1x baseline of the WC views' pot math.
+  const totalDepositsNok = investors.reduce(
+    (sum, i) => sum + i.totalInvestedNok,
+    0,
+  );
+
   return (
     <PortfolioLive
       initial={balances}
       series={series}
       ranges={RANGES}
       owners={investors}
+      totalDepositsNok={totalDepositsNok}
       defaultRange="1D"
     />
   );

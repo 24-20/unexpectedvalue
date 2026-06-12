@@ -17,6 +17,9 @@ interface PortfolioLiveProps {
   series: SeriesByMetric;
   ranges: { key: Range; label: string }[];
   owners: ReadonlyArray<Owner>;
+  // Sum of all deposits, SSR-fresh only: /api/investors strips amounts, and
+  // deposits change rarely enough that the next reload catching up is fine.
+  totalDepositsNok: number;
   defaultRange?: Range;
   pollMs?: number;
 }
@@ -31,6 +34,7 @@ export function PortfolioLive({
   series,
   ranges,
   owners,
+  totalDepositsNok,
   defaultRange = "1D",
   // Matches REVALIDATE_BALANCES server-side: polling faster than the data
   // cache revalidates only re-downloads identical JSON.
@@ -98,6 +102,7 @@ export function PortfolioLive({
         series={series}
         ranges={ranges}
         owners={liveOwners}
+        totalDepositsNok={totalDepositsNok}
         defaultRange={defaultRange}
         live={live}
       />

@@ -10,6 +10,7 @@ import {
 import {
   AreaSeries,
   CrosshairMode,
+  LineSeries,
   LineStyle,
   createChart,
   type IChartApi,
@@ -34,12 +35,32 @@ import type {
 import type { Owner } from "@/lib/owners";
 import { Mono } from "@/components/ui";
 
-type ViewMode = "total" | "relative";
+type ViewMode = "total" | "relative" | "target" | "projection";
 
 const VIEW_MODES: { key: ViewMode; label: string }[] = [
   { key: "total", label: "Total equity" },
   { key: "relative", label: "Relative equity" },
+  { key: "target", label: "Target" },
+  { key: "projection", label: "Projection" },
 ];
+
+// FIFA World Cup 2026 final — the horizon of the WC views. Their window
+// starts at kickoff (June 11), which the server bakes in as the first point
+// of the "VM" series; the chart reads it back from there. Both views plot
+// pure PnL accumulated since kickoff (deposits never move the curve), and
+// money numbers are the pot: deposits × PnL multiplier = deposits +
+// lifetime PnL. Targets are multiples of deposits; both the target path
+// and the projection compound at a constant daily rate.
+const WC_END_MS = Date.UTC(2026, 6, 19);
+const WC_END_LABEL = "Jul 19";
+const TARGET_MULTIPLIERS = [2, 3, 4];
+// Pseudo-range backing the WC views' footer: replaces the "1M" button there.
+const WC_RANGE: { key: Range; label: string } = { key: "VM", label: "WC end" };
+const DAY_MS = 86_400_000;
+
+function isWcView(mode: ViewMode): boolean {
+  return mode === "target" || mode === "projection";
+}
 
 // Freshest client-side reading, polled from /api/balances. Null values mean
 // "currently unknown" and leave the server-rendered series untouched.
@@ -53,6 +74,10 @@ interface PortfolioChartProps {
   series: SeriesByMetric;
   ranges: { key: Range; label: string }[];
   owners: ReadonlyArray<Owner>;
+  // Sum of all deposits in NOK — the 1x baseline of the WC views: targets
+  // are multiples of it and the pot is deposits + lifetime PnL. 0 (e.g.
+  // investors fetch failed) hides both overlays.
+  totalDepositsNok: number;
   defaultRange?: Range;
   live?: LiveEquityPoint;
 }
@@ -88,7 +113,9 @@ function withLivePoint(
 
 interface HoverState {
   t: number;
-  value: number;
+  // Curve value at t. Null when hovering the future region of the target
+  // view — there is a target value there but no actual reading yet.
+  value: number | null;
   pct: number;
   delta: number;
 }
@@ -149,11 +176,13 @@ export function PortfolioChart({
   series,
   ranges,
   owners,
+  totalDepositsNok,
   defaultRange = "1M",
   live,
 }: PortfolioChartProps) {
   const [range, setRange] = useState<Range>(defaultRange);
   const [viewMode, setViewModeState] = useState<ViewMode>("total");
+  const [targetMult, setTargetMultState] = useState(TARGET_MULTIPLIERS[0]);
   // Selection is held by owner *name* and resolved to an index at render
   // time: the owners list refreshes live (a new investment re-sorts the
   // percentage-ordered list), and a bare index would silently repoint at a
@@ -172,11 +201,18 @@ export function PortfolioChart({
   useEffect(() => {
     try {
       const storedMode = localStorage.getItem("portfolio:viewMode");
-      if (storedMode === "total" || storedMode === "relative") {
-        setViewModeState(storedMode);
+      if (VIEW_MODES.some((m) => m.key === storedMode)) {
+        const mode = storedMode as ViewMode;
+        setViewModeState(mode);
+        // The WC views open on the full since-start → WC-end window.
+        if (isWcView(mode)) setRange("VM");
       }
       const storedOwner = localStorage.getItem("portfolio:owner");
       if (storedOwner) setOwnerNameState(storedOwner);
+      const storedTarget = Number(localStorage.getItem("portfolio:target"));
+      if (TARGET_MULTIPLIERS.includes(storedTarget)) {
+        setTargetMultState(storedTarget);
+      }
     } catch {
       // localStorage unavailable (e.g. private mode) — ignore.
     }
@@ -184,8 +220,18 @@ export function PortfolioChart({
 
   const setViewMode = (v: ViewMode) => {
     setViewModeState(v);
+    // "VM" only exists in the WC views: entering them defaults to the full
+    // window, leaving falls back to the closest classic range.
+    if (isWcView(v) && !isWcView(viewMode)) setRange("VM");
+    if (!isWcView(v) && range === "VM") setRange("1M");
     try {
       localStorage.setItem("portfolio:viewMode", v);
+    } catch {}
+  };
+  const setTargetMult = (m: number) => {
+    setTargetMultState(m);
+    try {
+      localStorage.setItem("portfolio:target", String(m));
     } catch {}
   };
   const setOwnerIdx = (idx: number) => {
@@ -200,11 +246,22 @@ export function PortfolioChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  // Second line for the WC views: the target pace line or the projection.
+  // Holds empty data in the equity views.
+  const refLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  // Pulsing "you are here" marker pinned to the curve's last point in the
+  // WC views, positioned imperatively (no react state → no rerenders).
+  const dotRef = useRef<HTMLDivElement>(null);
+  const updateDotRef = useRef<(() => void) | null>(null);
   const themeRef = useRef<ThemeColors>(readThemeColors());
   const rangeRef = useRef<Range>(range);
+  const viewModeRef = useRef<ViewMode>(viewMode);
   useEffect(() => {
     rangeRef.current = range;
   }, [range]);
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+  }, [viewMode]);
 
   // Server-rendered series with the freshest polled reading spliced onto the
   // tail — this is what lets a load that rendered while an upstream was
@@ -235,19 +292,41 @@ export function PortfolioChart({
     viewMode === "relative" ? owners[ownerIdx] ?? owners[0] : null;
   const ownerScale = selectedOwner ? selectedOwner.percentage / 100 : 1;
 
+  // WC-view baselines. The curve is PnL accumulated since kickoff (wcBasePnl
+  // rebases the lifetime PnL column to zero at June 11). Money numbers are
+  // the pot — deposits × PnL multiplier, i.e. deposits + lifetime PnL — so
+  // the pot at kickoff is deposits + whatever PnL existed by then.
+  const isWc = isWcView(viewMode);
+  const wcStartT = liveSeries.pnl.VM.points[0]?.t ?? 0;
+  const wcBasePnl = liveSeries.pnl.VM.points[0]?.v ?? 0;
+  const wcPotStart = totalDepositsNok + wcBasePnl;
+
+  // WC views plot PnL accumulated since kickoff (deposits can't move it);
+  // the equity views plot equity, scaled by owner share in relative mode.
   const chartData = useMemo(() => {
+    if (isWc) {
+      return activePnl.points.map((p) => ({
+        time: Math.floor(p.t / 1000) as UTCTimestamp,
+        value: p.v - wcBasePnl,
+      }));
+    }
     return active.points.map((p) => ({
       time: Math.floor(p.t / 1000) as UTCTimestamp,
       value: p.v * ownerScale,
     }));
-  }, [active, ownerScale]);
+  }, [active, activePnl, ownerScale, isWc, wcBasePnl]);
 
   const absLookup = useMemo(() => {
     const m = new Map<number, number>();
-    for (const p of active.points)
-      m.set(Math.floor(p.t / 1000), p.v * ownerScale);
+    if (isWc) {
+      for (const p of activePnl.points)
+        m.set(Math.floor(p.t / 1000), p.v - wcBasePnl);
+    } else {
+      for (const p of active.points)
+        m.set(Math.floor(p.t / 1000), p.v * ownerScale);
+    }
     return m;
-  }, [active, ownerScale]);
+  }, [active, activePnl, ownerScale, isWc, wcBasePnl]);
 
   // PnL value at each time bucket — used to drive the headline delta/percent.
   // Kept unscaled here; scaling is applied at display time alongside the NOK
@@ -257,6 +336,80 @@ export function PortfolioChart({
     for (const p of activePnl.points) m.set(Math.floor(p.t / 1000), p.v);
     return m;
   }, [activePnl]);
+
+  // Reference line for the WC views, in the same PnL-since-kickoff space as
+  // the curve — both modes compound. Target: the pot must grow from its
+  // kickoff value to targetMult × deposits by WC end at a constant daily
+  // rate. Projection: the average daily growth achieved so far, carried
+  // forward. lightweight-charts spaces bars by index, not wall time, so the
+  // line mirrors the actual curve's timestamps and then continues on a day
+  // grid — uniform stamps are what keep the future region proportional.
+  const refLineData = useMemo(() => {
+    const out: { time: UTCTimestamp; value: number }[] = [];
+    if (!isWc || totalDepositsNok <= 0) return out;
+    const basePnl = liveSeries.pnl.VM.points[0]?.v ?? 0;
+    const startT = liveSeries.pnl.VM.points[0]?.t ?? 0;
+    const potStart = totalDepositsNok + basePnl;
+    const horizon = WC_END_MS - startT;
+    const lastActual = activePnl.points[activePnl.points.length - 1];
+    if (potStart <= 0 || horizon <= 0 || !lastActual) return out;
+
+    const pushFuture = (valueAt: (t: number) => number) => {
+      const stamps: number[] = [];
+      for (let t = lastActual.t + DAY_MS; t < WC_END_MS; t += DAY_MS) {
+        stamps.push(t);
+      }
+      stamps.push(WC_END_MS);
+      for (const t of stamps) {
+        const time = Math.floor(t / 1000) as UTCTimestamp;
+        // Keeps times strictly ascending; also drops the future leg
+        // entirely once "now" has passed WC end.
+        if (out.length > 0 && time <= out[out.length - 1].time) continue;
+        out.push({ time, value: valueAt(t) });
+      }
+    };
+
+    if (viewMode === "target") {
+      const endPot = targetMult * totalDepositsNok;
+      const targetPnl = (t: number) =>
+        potStart * Math.pow(endPot / potStart, (t - startT) / horizon) -
+        potStart;
+      for (const p of activePnl.points) {
+        out.push({
+          time: Math.floor(p.t / 1000) as UTCTimestamp,
+          value: targetPnl(p.t),
+        });
+      }
+      if (range === "VM") pushFuture(targetPnl);
+      return out;
+    }
+
+    // Projection only exists on the full window — the short ranges show no
+    // future, so there is nothing to draw there.
+    if (range !== "VM") return out;
+    const potNow = potStart + (lastActual.v - basePnl);
+    if (potNow <= 0) return out;
+    const daysElapsed = Math.max(1, (lastActual.t - startT) / DAY_MS);
+    // Average daily growth factor achieved so far, compounded forward.
+    const dailyGrowth = Math.pow(potNow / potStart, 1 / daysElapsed);
+    out.push({
+      time: Math.floor(lastActual.t / 1000) as UTCTimestamp,
+      value: lastActual.v - basePnl,
+    });
+    pushFuture(
+      (t) =>
+        potNow * Math.pow(dailyGrowth, (t - lastActual.t) / DAY_MS) - potStart,
+    );
+    return out;
+  }, [viewMode, range, targetMult, isWc, totalDepositsNok, liveSeries, activePnl]);
+
+  // Reference-line value per time bucket — lets a hover on the projected
+  // leg read the projected PnL straight off the line.
+  const refLookup = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const p of refLineData) m.set(p.time as number, p.value);
+    return m;
+  }, [refLineData]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -343,8 +496,23 @@ export function PortfolioChart({
       },
     });
 
+    const refLine = chart.addSeries(LineSeries, {
+      color: colors.muted,
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      priceFormat: {
+        type: "custom",
+        formatter: (v: number) => formatNOK(v),
+        minMove: 1,
+      },
+    });
+
     chartRef.current = chart;
     seriesRef.current = areaSeries;
+    refLineRef.current = refLine;
 
     // Drive the crosshair manually on touch so it appears immediately —
     // lightweight-charts' built-in tracking mode requires a ~1s long press.
@@ -389,19 +557,22 @@ export function PortfolioChart({
     container.addEventListener("touchmove", handleTouch, { passive: true });
 
     chart.subscribeCrosshairMove((param) => {
-      if (!param.time || !seriesRef.current) {
-        setHover(null);
-        return;
-      }
-      const data = param.seriesData.get(seriesRef.current);
-      if (!data || typeof param.time !== "number") {
+      if (!param.time || typeof param.time !== "number") {
         setHover(null);
         return;
       }
       const t = param.time as number;
       const absValue = absLookupRef.current.get(t);
       if (absValue === undefined) {
-        setHover(null);
+        // Past the curve's last point there is no actual reading, but the
+        // WC views still track the hover: target freezes the real number
+        // while the benchmark follows; projection reads the projected
+        // value off the line instead.
+        if (isWcView(viewModeRef.current)) {
+          setHover({ t: t * 1000, value: null, pct: 0, delta: 0 });
+        } else {
+          setHover(null);
+        }
         return;
       }
       const startVal = baseRef.current;
@@ -411,12 +582,50 @@ export function PortfolioChart({
       setHover({ t: t * 1000, value: absValue, pct, delta });
     });
 
+    // Pin the pulsing "now" dot to the curve's last point. Shown only while
+    // the reference line has data (i.e. in the WC views). Positioned against
+    // the chart element's box because the container has horizontal padding.
+    const dotEl = dotRef.current;
+    function updateDot() {
+      if (!dotEl) return;
+      const c = chartRef.current;
+      const s = seriesRef.current;
+      const line = refLineRef.current;
+      if (!c || !s || !line || line.data().length === 0) {
+        dotEl.style.display = "none";
+        return;
+      }
+      const data = s.data();
+      const last = data[data.length - 1];
+      if (!last || !("value" in last)) {
+        dotEl.style.display = "none";
+        return;
+      }
+      const x = c.timeScale().timeToCoordinate(last.time);
+      const y = s.priceToCoordinate(last.value);
+      if (x == null || y == null) {
+        dotEl.style.display = "none";
+        return;
+      }
+      const chartRect = c.chartElement().getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      dotEl.style.display = "block";
+      dotEl.style.left = `${chartRect.left - containerRect.left + x}px`;
+      dotEl.style.top = `${chartRect.top - containerRect.top + y}px`;
+    }
+    updateDotRef.current = updateDot;
+    const resizeObserver = new ResizeObserver(() => updateDot());
+    resizeObserver.observe(container);
+
     return () => {
+      resizeObserver.disconnect();
       container.removeEventListener("touchstart", handleTouch);
       container.removeEventListener("touchmove", handleTouch);
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      refLineRef.current = null;
+      updateDotRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -428,10 +637,26 @@ export function PortfolioChart({
     baseRef.current = base;
   }, [absLookup, base]);
 
+  // Both reference lines are solid: the projection reads as "your line
+  // continuing" (primary, full width); the target line is a benchmark
+  // (muted, thin). The pulsing dot marks where "now" sits on either.
   useEffect(() => {
-    if (!seriesRef.current) return;
+    const line = refLineRef.current;
+    if (!line) return;
+    const colors = themeRef.current;
+    line.applyOptions(
+      viewMode === "projection"
+        ? { color: colors.primary, lineStyle: LineStyle.Solid, lineWidth: 2 }
+        : { color: colors.muted, lineStyle: LineStyle.Solid, lineWidth: 1 },
+    );
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (!seriesRef.current || !refLineRef.current) return;
     seriesRef.current.setData(chartData);
+    refLineRef.current.setData(refLineData);
     chartRef.current?.timeScale().fitContent();
+    updateDotRef.current?.();
     setHover(null);
     // On initial SSR mount the chart's container hasn't settled into its
     // final size when this effect runs, so fitContent computes against a
@@ -439,29 +664,81 @@ export function PortfolioChart({
     // Re-fit on the next frame to catch the post-layout dimensions.
     const raf = requestAnimationFrame(() => {
       chartRef.current?.timeScale().fitContent();
+      updateDotRef.current?.();
     });
     return () => cancelAnimationFrame(raf);
-  }, [chartData]);
+  }, [chartData, refLineData]);
 
-  const display = hover ?? {
-    t: active.points[active.points.length - 1]?.t ?? 0,
-    value: active.endValue * ownerScale,
-    pct: active.changePct,
-    delta: active.changeAbs,
-  };
-  const rangeLabel = ranges.find((r) => r.key === range)?.label ?? "";
-  const headerLabel = selectedOwner
-    ? `${selectedOwner.name}'s equity`
-    : "Equity";
+  // Headline values at the display moment. In the WC views the curve is
+  // PnL-since-kickoff and the money number is the pot (deposits + lifetime
+  // PnL); in the equity views it's the (owner-scaled) equity value itself.
+  const lastCurvePoint = isWc
+    ? activePnl.points[activePnl.points.length - 1]
+    : active.points[active.points.length - 1];
+  const lastCurveValue = isWc
+    ? (lastCurvePoint?.v ?? 0) - wcBasePnl
+    : active.endValue * ownerScale;
+  const displayT = hover?.t ?? lastCurvePoint?.t ?? 0;
+  // A null hover value means the cursor is past the curve's end. The target
+  // view freezes the real number there; the projection view shows the
+  // projected PnL × money instead, read off the line.
+  const hoverProjectedPnl =
+    viewMode === "projection" && hover && hover.value == null
+      ? refLookup.get(Math.floor(hover.t / 1000)) ?? null
+      : null;
+  const displayCurveValue =
+    hover?.value ?? hoverProjectedPnl ?? lastCurveValue;
+  const headlineValue = isWc
+    ? wcPotStart + displayCurveValue
+    : displayCurveValue;
+  // The target view's second number. Default: the pot if the target is hit
+  // (targetMult × deposits). While hovering: where the compounding path
+  // says the pot should be at the hovered moment.
+  const wcHorizon = WC_END_MS - wcStartT;
+  const targetMoney =
+    viewMode === "target" &&
+    totalDepositsNok > 0 &&
+    wcPotStart > 0 &&
+    wcHorizon > 0
+      ? hover
+        ? wcPotStart *
+          Math.pow(
+            (targetMult * totalDepositsNok) / wcPotStart,
+            (displayT - wcStartT) / wcHorizon,
+          )
+        : targetMult * totalDepositsNok
+      : null;
+  // WC views swap the "1M" button for the kickoff → WC-end window.
+  const displayRanges = isWc
+    ? [...ranges.filter((r) => r.key !== "1M"), WC_RANGE]
+    : ranges;
+  const rangeLabel = displayRanges.find((r) => r.key === range)?.label ?? "";
+  const headerLabel = isWc
+    ? "Money"
+    : selectedOwner
+      ? `${selectedOwner.name}'s equity`
+      : "Equity";
+  // Where the projection lands at WC end, in money; null while the line
+  // isn't drawn (short range or no baseline yet).
+  const projectedEndMoney =
+    viewMode === "projection" && wcPotStart > 0 && refLineData.length > 1
+      ? wcPotStart + refLineData[refLineData.length - 1].value
+      : null;
   // PnL deltas drive the headline kr + percent. Scale the NOK amount by the
   // selected owner's share, but the percent is a ratio so it cancels out.
+  // On the projected leg the delta tracks the projected PnL so it stays
+  // consistent with the money number above it.
   const pnlDeltaUnscaled = hover
-    ? (pnlLookup.get(Math.floor(hover.t / 1000)) ?? activePnl.endValue) -
-      activePnl.startValue
+    ? hoverProjectedPnl != null
+      ? hoverProjectedPnl
+      : (pnlLookup.get(Math.floor(hover.t / 1000)) ?? activePnl.endValue) -
+        activePnl.startValue
     : activePnl.changeAbs;
   const pnlDelta = pnlDeltaUnscaled * ownerScale;
-  const pnlPct =
-    currentEquity > 0 ? (pnlDeltaUnscaled / currentEquity) * 100 : 0;
+  // Percent basis: the kickoff pot in the WC views (deposit-timing free),
+  // current equity elsewhere.
+  const pnlPctBase = isWc ? wcPotStart : currentEquity;
+  const pnlPct = pnlPctBase > 0 ? (pnlDeltaUnscaled / pnlPctBase) * 100 : 0;
   const isUp = pnlDelta >= 0;
   const deltaTone = isUp ? "text-up" : "text-down";
 
@@ -479,16 +756,32 @@ export function PortfolioChart({
                       While the user scrubs the chart the value snaps instead
                       of spinning through every hovered point. */}
                   <NumberFlow
-                    value={Math.round(display.value)}
+                    value={Math.round(headlineValue)}
                     locales="en-US"
                     format={{ maximumFractionDigits: 0 }}
                     suffix=" kr"
                     animated={!hover}
                   />
                 </div>
+                {targetMoney != null && (
+                  <div className="mt-1 flex items-baseline gap-2 font-mono tabular-nums text-muted">
+                    <span className="text-[10px] uppercase tracking-widest">
+                      target {targetMult}x
+                    </span>
+                    <span className="text-xl md:text-2xl">
+                      <NumberFlow
+                        value={Math.round(targetMoney)}
+                        locales="en-US"
+                        format={{ maximumFractionDigits: 0 }}
+                        suffix=" kr"
+                        animated={!hover}
+                      />
+                    </span>
+                  </div>
+                )}
                 <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
                   <span className="text-muted">
-                    {hover ? formatDateTime(display.t) : rangeLabel}
+                    {hover ? formatDateTime(displayT) : rangeLabel}
                   </span>
                   <div className="flex items-baseline gap-3">
                     <span className={deltaTone}>
@@ -497,6 +790,12 @@ export function PortfolioChart({
                     <span className={deltaTone}>{formatPct(pnlPct)}</span>
                   </div>
                 </div>
+                {viewMode === "projection" && projectedEndMoney != null && (
+                  <div className="mt-1 font-mono text-xs text-muted tabular-nums">
+                    est. {WC_END_LABEL} ≈ {formatNOK(projectedEndMoney)} (
+                    {(projectedEndMoney / totalDepositsNok).toFixed(2)}x)
+                  </div>
+                )}
               </div>
               <div className="flex flex-col items-end gap-2 shrink-0">
                 <ViewModeDropdown
@@ -512,17 +811,43 @@ export function PortfolioChart({
                     />
                   </div>
                 )}
+                {viewMode === "target" && (
+                  <div className="animate-[dropdown-pop-in_180ms_ease-out] origin-top-right">
+                    <TargetDropdown
+                      value={targetMult}
+                      onChange={setTargetMult}
+                    />
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
           <div
             ref={containerRef}
-            className="h-[300px] md:h-[420px] w-full touch-none px-3 sm:px-6"
-          />
+            className="relative h-[300px] md:h-[420px] w-full touch-none px-3 sm:px-6"
+          >
+            {/* "You are here" marker for the WC views; positioned by
+                updateDot, hidden whenever the reference line is empty. */}
+            <div
+              ref={dotRef}
+              aria-hidden
+              className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-1/2"
+              style={{ display: "none" }}
+            >
+              <span
+                className="absolute inset-0 rounded-full animate-ping opacity-75"
+                style={{ backgroundColor: "var(--primary)" }}
+              />
+              <span
+                className="relative block h-3 w-3 rounded-full"
+                style={{ backgroundColor: "var(--primary)" }}
+              />
+            </div>
+          </div>
 
           <div className="p-3 md:p-4 flex flex-wrap gap-2">
-            {ranges.map((r) => {
+            {displayRanges.map((r) => {
               const isActive = r.key === range;
               // The per-range label is always the relative PnL return for
               // that range, regardless of which line is on screen — same
@@ -636,6 +961,83 @@ function ViewModeDropdown({
                 )}
               >
                 <span>{m.label}</span>
+                <span
+                  aria-hidden
+                  className={cn(
+                    "leading-none",
+                    selected ? "opacity-100" : "opacity-0",
+                  )}
+                >
+                  ✓
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TargetDropdown({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (m: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useOutsideClick(ref, open, () => setOpen(false));
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="font-mono text-[10px] uppercase tracking-widest rounded-lg bg-foreground/10 text-foreground ring-1 ring-foreground/25 px-3 py-2 hover:bg-foreground/15 flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
+      >
+        <span aria-hidden className="text-muted leading-none">
+          ↳
+        </span>
+        <span>{value}x</span>
+        <span
+          aria-hidden
+          className={cn(
+            "transition-transform leading-none",
+            open && "rotate-180",
+          )}
+        >
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute right-0 top-full mt-1 rounded-lg bg-surface-elevated min-w-[160px] z-20 overflow-hidden p-1"
+        >
+          {TARGET_MULTIPLIERS.map((m) => {
+            const selected = m === value;
+            return (
+              <button
+                key={m}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                onClick={() => {
+                  onChange(m);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex items-center justify-between gap-3 w-full text-left font-mono text-[10px] uppercase tracking-widest rounded-lg px-3 py-2 whitespace-nowrap cursor-pointer transition-colors",
+                  selected
+                    ? "text-foreground"
+                    : "text-muted hover:bg-foreground/10 hover:text-foreground",
+                )}
+              >
+                <span>{m}x</span>
                 <span
                   aria-hidden
                   className={cn(
