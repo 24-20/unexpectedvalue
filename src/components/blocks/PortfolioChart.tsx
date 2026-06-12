@@ -535,8 +535,35 @@ export function PortfolioChart({
       if (typeof rawTime !== "number") return;
 
       // Snap to the nearest data point so the displayed value lines up with
-      // the crosshair marker.
+      // the crosshair marker. The reference line participates too — without
+      // it a touch drag pins at the live dot and only the ~1s long-press
+      // tracking mode could reach the future leg of the WC views. Ties go
+      // to the actual curve.
       const snapped = findNearestKey(absLookupRef.current, rawTime);
+      const line = refLineRef.current;
+      let refKey: number | null = null;
+      let refValue = 0;
+      let refDiff = Number.POSITIVE_INFINITY;
+      if (line) {
+        for (const p of line.data()) {
+          if (!("value" in p)) continue;
+          const diff = Math.abs((p.time as number) - rawTime);
+          if (diff < refDiff) {
+            refDiff = diff;
+            refKey = p.time as number;
+            refValue = p.value;
+          }
+        }
+      }
+      if (
+        line &&
+        refKey != null &&
+        (snapped == null || refDiff < Math.abs(snapped - rawTime))
+      ) {
+        chartRef.current.setCrosshairPosition(refValue, refKey as Time, line);
+        setHover({ t: refKey * 1000, value: null, pct: 0, delta: 0 });
+        return;
+      }
       if (snapped == null) return;
       const absValue = absLookupRef.current.get(snapped);
       if (absValue === undefined) return;
