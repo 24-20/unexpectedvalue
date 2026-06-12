@@ -829,17 +829,26 @@ export function PortfolioChart({
                     </span>
                   </div>
                 )}
-                <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
-                  <span className="text-muted">
-                    {hover ? formatDateTime(displayT) : rangeLabel}
-                  </span>
-                  <div className="flex items-baseline gap-3">
-                    <span className={deltaTone}>
-                      {formatNOKDelta(pnlDelta)}
+                {/* WC views keep this area clean: no range label or deltas
+                    (the pot and pace lines carry it) — only the hovered date
+                    while scrubbing, as the time anchor. */}
+                {!isWc ? (
+                  <div className="mt-2 flex flex-col sm:flex-row sm:flex-wrap sm:items-baseline gap-1 sm:gap-3 font-mono text-sm tabular-nums">
+                    <span className="text-muted">
+                      {hover ? formatDateTime(displayT) : rangeLabel}
                     </span>
-                    <span className={deltaTone}>{formatPct(pnlPct)}</span>
+                    <div className="flex items-baseline gap-3">
+                      <span className={deltaTone}>
+                        {formatNOKDelta(pnlDelta)}
+                      </span>
+                      <span className={deltaTone}>{formatPct(pnlPct)}</span>
+                    </div>
                   </div>
-                </div>
+                ) : hover ? (
+                  <div className="mt-2 font-mono text-sm tabular-nums text-muted">
+                    {formatDateTime(displayT)}
+                  </div>
+                ) : null}
                 {viewMode === "target" && targetDailyPct != null && (
                   <div className="mt-1 font-mono text-xs text-muted tabular-nums">
                     needs {formatPct(targetDailyPct)}/day to hit {targetMult}x
